@@ -179,36 +179,164 @@ HTTP endpoints: `/api/articles`, `/api/ask`, `/api/search`, `/api/ingest`, `/api
 
 ## 中文说明
 
-LLMBase 是一个 **LLM 驱动的个人知识库系统**，灵感来自 [Karpathy 的设计](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)。
+### 这是什么？
 
-原始文档输入 → LLM 编译成三语结构化 wiki → 持续查询增强，知识持续叠加。
+LLMBase 是一个 **LLM 驱动的个人知识库系统**，灵感来自 [Karpathy 的 LLM Knowledge Base 设计](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)。
+
+核心理念：**原始文档输入 → LLM 编译成三语结构化 wiki → 持续查询增强 → 知识不断叠加，温故而知新。**
+
+不需要向量数据库，不需要 embedding pipeline。只需要 markdown 文件、一个 LLM、和一套干净的 Web UI。
+
+### 架构设计
+
+```
+┌─ 数据摄入层 ────────────────────────────────────────────┐
+│  URL 抓取 | PDF 自动转换 | 本地文件 | CBETA 大藏经       │
+│  ctext.org 儒道经典 | 浏览器抓取 (OpenCLI)              │
+└─────────────────────────┬───────────────────────────────┘
+                          ↓
+┌─ LLM 编译层 ────────────────────────────────────────────┐
+│  提取概念 → 生成三语文章 (EN/中/日)                      │
+│  建立 [[wiki 链接]] → 交叉引用 → 反向链接                │
+│  重复概念自动合并 → 知识叠加而非覆盖                     │
+└─────────────────────────┬───────────────────────────────┘
+                          ↓
+┌─ 知识库层 ──────────────────────────────────────────────┐
+│  wiki/concepts/*.md    三语结构化文章                     │
+│  wiki/_meta/index.json 全文索引                          │
+│  wiki/_meta/taxonomy.json 自动生成的分类体系              │
+│  wiki/_meta/backlinks.json 反向链接图谱                  │
+│  wiki/outputs/*.md     Q&A 答案归档                      │
+└─────────────────────────┬───────────────────────────────┘
+                          ↓
+┌─ 应用层 ────────────────────────────────────────────────┐
+│  React Web UI (亮暗双主题，全局语言切换)                   │
+│  CLI 命令行工具                                          │
+│  Agent HTTP API + Python SDK                             │
+│  D3.js 知识图谱可视化                                    │
+│  自治 Worker（后台自动学习 + 编译 + 健康检查）             │
+└─────────────────────────────────────────────────────────┘
+```
+
+### 四个阶段循环
+
+1. **摄入 (Ingest)** — 从 URL、PDF、本地文件、或数据源插件（CBETA、ctext.org）收集原始文档
+2. **编译 (Compile)** — LLM 阅读原始文档，提取概念，撰写三语文章，构建索引。已有概念自动合并更新
+3. **查询与增强 (Query & Enhance)** — 基于 wiki 的智能问答，答案归档回 wiki。每次查询都让知识库更强
+4. **检查与维护 (Lint)** — 断链检测、孤立文章发现、元数据补全、LLM 深度分析建议新连接
 
 ### 核心功能
 
 | 功能 | 说明 |
 |------|------|
-| **三语输出** | 每篇文章自动生成 English / 中文 / 日本語，全局语言切换 |
-| **自治学习** | 后台 Worker 自动从 CBETA 等数据源持续摄入和编译 |
-| **模型容错** | 主模型失败自动切换备选模型，知识库持续增长不中断 |
-| **PDF 摄入** | `llmbase ingest pdf` 自动切分 PDF 为 markdown |
-| **知识叠加** | Q&A 答案归档回 wiki，Lint 建议新连接，温故而知新 |
-| **Agent API** | HTTP + Python SDK，便于 AI agent 直接调用 |
+| **三语输出** | 每篇文章自动生成 English / 中文 / 日本語 三个版本，顶栏全局语言切换，支持中英双语模式 |
+| **自治学习** | 后台 Worker 自动从配置的数据源持续摄入和编译，部署后无需人工干预 |
+| **模型容错** | 主模型失败自动切换备选模型（如 MiniMax-M2.7 → M2.5 → deepseek），知识库持续增长不中断 |
+| **PDF 摄入** | `llmbase ingest pdf ./book.pdf` 自动切分为 20 页/块的 markdown，支持中英文 PDF |
+| **知识叠加** | Q&A 答案归档回 wiki，Lint 建议新连接，重复概念合并而非覆盖。温故而知新 |
+| **分类体系** | LLM 自动生成层级分类（参考四库全书分类法），左栏按分类浏览 |
+| **Agent API** | HTTP API + Python SDK，便于 AI agent 直接查询、搜索、贡献知识 |
+| **知识图谱** | D3.js 力导向图，可视化概念间的连接关系，发现意外关联 |
 
 ### 快速开始
 
 ```bash
+# 克隆并安装
 git clone https://github.com/Hosuke/llmbase.git && cd llmbase
 pip install -e .
 cd frontend && npm install && npx vite build && cd ..
-cp .env.example .env  # 配置 API key
-llmbase web           # 启动 http://localhost:5555
+
+# 配置 LLM（支持任何 OpenAI 兼容 API）
+cp .env.example .env
+# 编辑 .env 填入 API key、模型名、备选模型
+
+# 启动
+llmbase web    # 浏览器打开 http://localhost:5555
 ```
+
+### CLI 命令速查
+
+```bash
+# 摄入
+llmbase ingest url https://example.com/article   # 抓取网页
+llmbase ingest pdf ./book.pdf --chunk-pages 20    # PDF 自动转换
+llmbase ingest cbeta-learn --batch 10             # CBETA 大藏经渐进学习
+llmbase ingest ctext-book 论语 /analects/zh       # ctext 经典抓取
+
+# 编译与维护
+llmbase compile new       # 增量编译新文档
+llmbase lint check        # 结构健康检查
+llmbase lint deep         # LLM 深度分析
+
+# 查询
+llmbase query "什么是般若？"              # 基于知识库问答
+llmbase query "比较儒道佛的核心思想" --file-back  # 答案归档回 wiki
+
+# 部署
+llmbase web               # Web UI (localhost:5555)
+llmbase serve             # Agent API (localhost:5556)
+```
+
+### 自治 Worker 配置
+
+```yaml
+# config.yaml
+worker:
+  enabled: true
+  learn_source: cbeta        # 数据源（CBETA 大藏经）
+  learn_interval_hours: 6    # 每 6 小时自动学习一批
+  learn_batch_size: 10       # 每批 10 部经文
+  compile_interval_hours: 1  # 每小时自动编译
+```
+
+部署后服务器会自己学、自己编译、自己建索引。你只需要偶尔上传新 PDF 或调整学习方向。
 
 ### 数据源插件
 
-- **CBETA** — 大藏经渐进式学习 (`llmbase ingest cbeta-learn`)
-- **ctext.org** — 儒道经典抓取 (`llmbase ingest ctext-book`)
-- **PDF** — 任意 PDF 自动转换 (`llmbase ingest pdf`)
+| 插件 | 数据量 | 用法 |
+|------|--------|------|
+| **CBETA** | 4,868 部佛经，2.23 亿字 | `llmbase ingest cbeta-learn` |
+| **ctext.org** | 儒道墨法兵等先秦经典 | `llmbase ingest ctext-book` |
+| **PDF** | 任意 PDF 文件 | `llmbase ingest pdf` |
+
+### 项目结构
+
+```
+llmbase/
+├── frontend/              # React + TypeScript + Tailwind CSS
+│   └── src/
+│       ├── pages/         # Dashboard, Wiki, Search, Q&A, Graph, Ingest, Health
+│       ├── components/    # Layout, Markdown, ArticleCard, Tag, Icon
+│       └── lib/           # API 客户端, 主题管理, 语言管理, 品牌配置
+├── tools/                 # Python 后端
+│   ├── cli.py             # Click CLI 入口
+│   ├── ingest.py          # 文档摄入（URL/文件/目录）
+│   ├── compile.py         # LLM 三语编译 + 去重合并
+│   ├── query.py           # Q&A 引擎
+│   ├── search.py          # TF-IDF 全文搜索 + Web UI
+│   ├── lint.py            # 健康检查 + 自动修复
+│   ├── worker.py          # 自治学习后台 Worker
+│   ├── cbeta.py           # CBETA 大藏经插件
+│   ├── ctext.py           # ctext.org 经典插件
+│   ├── pdf.py             # PDF → Markdown 转换
+│   ├── taxonomy.py        # LLM 自动分类体系生成
+│   ├── agent_api.py       # Agent HTTP API + Python SDK
+│   ├── web.py             # Flask Web 服务器
+│   └── llm.py             # LLM 客户端（多模型容错）
+├── config.yaml            # 配置文件
+├── .env.example           # LLM API 配置模板
+├── Dockerfile             # Docker 部署
+└── pyproject.toml
+```
+
+### 部署方式
+
+| 方式 | 说明 |
+|------|------|
+| **Docker** | `docker compose up -d`，一行命令 |
+| **Railway** | 连接 GitHub 仓库，自动部署，push 即更新 |
+| **Render** | 免费 tier 可用 |
+| **VPS** | `gunicorn wsgi:app`，任何服务器 |
 
 ---
 
@@ -219,5 +347,5 @@ MIT
 ---
 
 <div align="center">
-<sub>Built with LLMs, for LLMs. Knowledge compounds.</sub>
+<sub>Built with LLMs, for LLMs. Knowledge compounds. 温故而知新。</sub>
 </div>
