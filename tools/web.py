@@ -159,6 +159,38 @@ def create_web_app(base_dir: Path | None = None):
         path = ingest_url(source, base)
         return jsonify({"status": "ok", "path": str(path)})
 
+    @app.route("/api/upload", methods=["POST"])
+    def api_upload():
+        """Upload a PDF/markdown file for ingestion."""
+        if "file" not in request.files:
+            return jsonify({"status": "error", "message": "No file provided"}), 400
+        f = request.files["file"]
+        if not f.filename:
+            return jsonify({"status": "error", "message": "Empty filename"}), 400
+
+        cfg = load_config(base)
+        raw_dir = Path(cfg["paths"]["raw"])
+        raw_dir.mkdir(parents=True, exist_ok=True)
+
+        # Save uploaded file
+        import tempfile
+        ext = Path(f.filename).suffix.lower()
+        with tempfile.NamedTemporaryFile(delete=False, suffix=ext, dir=str(raw_dir)) as tmp:
+            f.save(tmp)
+            tmp_path = tmp.name
+
+        # Process based on file type
+        if ext == ".pdf":
+            from .pdf import ingest_pdf
+            paths = ingest_pdf(tmp_path, chunk_pages=20, base_dir=base)
+            Path(tmp_path).unlink()  # Clean up temp file
+            return jsonify({"status": "ok", "chunks": len(paths), "filename": f.filename})
+        else:
+            from .ingest import ingest_file
+            path = ingest_file(tmp_path, base)
+            Path(tmp_path).unlink()
+            return jsonify({"status": "ok", "path": str(path), "filename": f.filename})
+
     @app.route("/api/compile", methods=["POST"])
     def api_compile():
         articles = compile_new(base)
