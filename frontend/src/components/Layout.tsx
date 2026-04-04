@@ -4,7 +4,7 @@ import { Icon } from './Icon';
 import { useTheme } from '../lib/theme';
 import { useLang, LANG_OPTIONS, localizeTitle } from '../lib/lang';
 import { fetchBranding, getBranding, type Branding } from '../lib/branding';
-import { api, type Article } from '../lib/api';
+import { api, type Article, type Collection } from '../lib/api';
 
 const NAV = [
   { to: '/', icon: 'dashboard', label: 'Dashboard' },
@@ -22,6 +22,8 @@ export function Layout() {
   const { lang, setLang } = useLang();
   const [branding, setBranding] = useState<Branding>(getBranding());
   const [articles, setArticles] = useState<Article[]>([]);
+  const [collections, setCollections] = useState<Collection[]>([]);
+  const [expandedCats, setExpandedCats] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [langOpen, setLangOpen] = useState(false);
@@ -30,7 +32,16 @@ export function Layout() {
   useEffect(() => {
     fetchBranding().then(setBranding);
     api.getArticles().then(setArticles).catch(() => {});
+    api.getCollections().then(setCollections).catch(() => {});
   }, []);
+
+  const toggleCat = (id: string) => {
+    setExpandedCats(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
 
   // Close lang dropdown on outside click
   useEffect(() => {
@@ -71,16 +82,27 @@ export function Layout() {
             </NavLink>
           ))}
 
-          {sidebarOpen && articles.length > 0 && (
+          {sidebarOpen && collections.length > 0 && (
             <>
               <div className="text-[11px] text-on-surface-variant tracking-widest uppercase px-3.5 pt-5 pb-1.5">
-                Articles ({articles.length})
+                Categories ({articles.length})
               </div>
-              {articles.slice(0, 30).map(a => (
-                <div key={a.slug}
-                  className="px-3.5 py-1.5 text-sm text-on-surface-variant hover:text-on-surface hover:bg-surface-high rounded cursor-pointer truncate transition-colors"
-                  onClick={() => navigate(`/wiki/${a.slug}`)}>
-                  {localizeTitle(a.title, lang)}
+              {collections.map(col => (
+                <div key={col.id}>
+                  <div
+                    className="flex items-center gap-2 px-3.5 py-2 text-sm text-on-surface-variant hover:text-on-surface hover:bg-surface-high rounded cursor-pointer transition-colors"
+                    onClick={() => toggleCat(col.id)}>
+                    <Icon name={expandedCats.has(col.id) ? 'expand_more' : 'chevron_right'} className="text-[16px]" />
+                    <span className="truncate flex-1">{col.label}</span>
+                    <span className="text-[11px] text-outline">{col.count}</span>
+                  </div>
+                  {expandedCats.has(col.id) && col.articles.map(a => (
+                    <div key={a.slug}
+                      className="pl-9 pr-3.5 py-1 text-sm text-on-surface-variant hover:text-on-surface hover:bg-surface-high rounded cursor-pointer truncate transition-colors"
+                      onClick={() => navigate(`/wiki/${a.slug}`)}>
+                      {localizeTitle(a.title, lang)}
+                    </div>
+                  ))}
                 </div>
               ))}
             </>
