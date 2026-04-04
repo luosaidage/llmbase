@@ -1,0 +1,214 @@
+"""Search engine: naive full-text search over the wiki with web UI and CLI."""
+
+import json
+import math
+import re
+from collections import Counter
+from pathlib import Path
+
+import frontmatter
+
+from .config import load_config
+
+
+def search(query: str, top_k: int = 10, base_dir: Path | None = None) -> list[dict]:
+    """Search the wiki using TF-IDF-like scoring."""
+    cfg = load_config(base_dir)
+    concepts_dir = Path(cfg["paths"]["concepts"])
+    outputs_dir = Path(cfg["paths"]["outputs"])
+
+    if not concepts_dir.exists():
+        return []
+
+    query_terms = _tokenize(query)
+    if not query_terms:
+        return []
+
+    # Build document corpus
+    docs = []
+    for md_file in list(concepts_dir.glob("*.md")) + list(outputs_dir.glob("*.md")):
+        post = frontmatter.load(str(md_file))
+        title = post.metadata.get("title", md_file.stem)
+        summary = post.metadata.get("summary", "")
+        tags = " ".join(post.metadata.get("tags", []))
+        text = f"{title} {title} {summary} {tags} {post.content}"  # title weighted 2x
+        docs.append({
+            "path": str(md_file),
+            "slug": md_file.stem,
+            "title": title,
+            "summary": summary,
+            "tags": post.metadata.get("tags", []),
+            "text": text,
+            "tokens": _tokenize(text),
+        })
+
+    if not docs:
+        return []
+
+    # Compute IDF
+    doc_count = len(docs)
+    idf = {}
+    for term in query_terms:
+        df = sum(1 for d in docs if term in d["tokens"])
+        idf[term] = math.log((doc_count + 1) / (df + 1)) + 1
+
+    # Score each document
+    results = []
+    for doc in docs:
+        token_counts = Counter(doc["tokens"])
+        score = 0.0
+        matched_terms = []
+        for term in query_terms:
+            if term in token_counts:
+                tf = 1 + math.log(token_counts[term])
+                score += tf * idf[term]
+                matched_terms.append(term)
+
+        if score > 0:
+            # Find best matching snippet
+            snippet = _extract_snippet(doc["text"], query_terms)
+            results.append({
+                "slug": doc["slug"],
+                "title": doc["title"],
+                "summary": doc["summary"],
+                "score": round(score, 3),
+                "matched_terms": matched_terms,
+                "snippet": snippet,
+                "path": doc["path"],
+            })
+
+    results.sort(key=lambda x: x["score"], reverse=True)
+    return results[:top_k]
+
+
+def search_cli(query: str, base_dir: Path | None = None) -> str:
+    """CLI-friendly search output (for LLM tool use)."""
+    results = search(query, base_dir=base_dir)
+    if not results:
+        return f"No results found for: {query}"
+
+    output = f"Search results for: {query}\n\n"
+    for i, r in enumerate(results, 1):
+        output += f"{i}. [{r['title']}] (score: {r['score']})\n"
+        output += f"   {r['summary']}\n"
+        if r.get("snippet"):
+            output += f"   ...{r['snippet']}...\n"
+        output += "\n"
+
+    return output
+
+
+def create_search_app(base_dir: Path | None = None):
+    """Create Flask app for web UI search."""
+    from flask import Flask, request, jsonify, render_template_string
+
+    app = Flask(__name__)
+    app.config["BASE_DIR"] = base_dir
+
+    HTML_TEMPLATE = """<!DOCTYPE html>
+<html>
+<head>
+    <title>LLMBase Search</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+               max-width: 800px; margin: 0 auto; padding: 40px 20px; background: #1a1a2e; color: #e0e0e0; }
+        h1 { margin-bottom: 20px; color: #e94560; }
+        .search-box { display: flex; gap: 10px; margin-bottom: 30px; }
+        input[type="text"] { flex: 1; padding: 12px 16px; font-size: 16px; border: 2px solid #16213e;
+                             border-radius: 8px; background: #16213e; color: #e0e0e0; outline: none; }
+        input[type="text"]:focus { border-color: #e94560; }
+        button { padding: 12px 24px; font-size: 16px; background: #e94560; color: white;
+                 border: none; border-radius: 8px; cursor: pointer; }
+        button:hover { background: #c23152; }
+        .result { padding: 16px; margin-bottom: 12px; background: #16213e;
+                  border-radius: 8px; border-left: 3px solid #e94560; }
+        .result h3 { color: #e94560; margin-bottom: 6px; }
+        .result .score { color: #888; font-size: 0.85em; }
+        .result .summary { margin-top: 6px; color: #aaa; }
+        .result .snippet { margin-top: 8px; font-style: italic; color: #999; font-size: 0.9em; }
+        .tags { margin-top: 6px; }
+        .tag { display: inline-block; padding: 2px 8px; margin: 2px; background: #0f3460;
+               border-radius: 4px; font-size: 0.8em; color: #a0d2db; }
+        .stats { color: #666; margin-bottom: 20px; }
+    </style>
+</head>
+<body>
+    <h1>LLMBase Search</h1>
+    <div class="search-box">
+        <input type="text" id="q" placeholder="Search the knowledge base..." autofocus
+               onkeypress="if(event.key==='Enter')doSearch()">
+        <button onclick="doSearch()">Search</button>
+    </div>
+    <div id="stats" class="stats"></div>
+    <div id="results"></div>
+    <script>
+        async function doSearch() {
+            const q = document.getElementById('q').value;
+            if (!q) return;
+            const resp = await fetch('/api/search?q=' + encodeURIComponent(q));
+            const data = await resp.json();
+            const stats = document.getElementById('stats');
+            const results = document.getElementById('results');
+            stats.textContent = data.results.length + ' results found';
+            results.innerHTML = data.results.map((r, i) =>
+                '<div class="result">' +
+                '<h3>' + (i+1) + '. ' + r.title + '</h3>' +
+                '<span class="score">Score: ' + r.score + '</span>' +
+                (r.summary ? '<p class="summary">' + r.summary + '</p>' : '') +
+                (r.snippet ? '<p class="snippet">...' + r.snippet + '...</p>' : '') +
+                '</div>'
+            ).join('');
+        }
+    </script>
+</body>
+</html>"""
+
+    @app.route("/")
+    def index():
+        return render_template_string(HTML_TEMPLATE)
+
+    @app.route("/api/search")
+    def api_search():
+        q = request.args.get("q", "")
+        top_k = int(request.args.get("top_k", 10))
+        results = search(q, top_k=top_k, base_dir=app.config["BASE_DIR"])
+        return jsonify({"query": q, "results": results})
+
+    return app
+
+
+def _tokenize(text: str) -> list[str]:
+    """Simple tokenizer: lowercase, split on non-word chars, filter stopwords."""
+    stopwords = {
+        "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
+        "have", "has", "had", "do", "does", "did", "will", "would", "could",
+        "should", "may", "might", "shall", "can", "need", "dare", "ought",
+        "used", "to", "of", "in", "for", "on", "with", "at", "by", "from",
+        "as", "into", "through", "during", "before", "after", "above", "below",
+        "between", "out", "off", "over", "under", "again", "further", "then",
+        "once", "here", "there", "when", "where", "why", "how", "all", "both",
+        "each", "few", "more", "most", "other", "some", "such", "no", "nor",
+        "not", "only", "own", "same", "so", "than", "too", "very", "and",
+        "but", "or", "if", "while", "that", "this", "it", "its", "they",
+    }
+    tokens = re.findall(r"\w+", text.lower())
+    return [t for t in tokens if t not in stopwords and len(t) > 1]
+
+
+def _extract_snippet(text: str, query_terms: list[str], window: int = 100) -> str:
+    """Extract a snippet around the first matching term."""
+    text_lower = text.lower()
+    best_pos = len(text)
+    for term in query_terms:
+        pos = text_lower.find(term)
+        if pos != -1 and pos < best_pos:
+            best_pos = pos
+
+    if best_pos == len(text):
+        return text[:200]
+
+    start = max(0, best_pos - window)
+    end = min(len(text), best_pos + window)
+    snippet = text[start:end].replace("\n", " ").strip()
+    return snippet

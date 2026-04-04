@@ -1,0 +1,213 @@
+"""Ingest module: collect raw documents into the raw/ directory."""
+
+import hashlib
+import re
+import shutil
+from datetime import datetime, timezone
+from pathlib import Path
+from urllib.parse import urlparse
+
+import frontmatter
+import requests
+from bs4 import BeautifulSoup
+from markdownify import markdownify as md
+
+from .config import load_config, ensure_dirs
+
+
+def ingest_url(url: str, base_dir: Path | None = None) -> Path:
+    """Fetch a web article and save as markdown with images downloaded locally."""
+    cfg = load_config(base_dir)
+    ensure_dirs(cfg)
+    raw_dir = Path(cfg["paths"]["raw"])
+
+    # Fetch page
+    resp = requests.get(url, timeout=30, headers={"User-Agent": "LLMBase/1.0"})
+    resp.raise_for_status()
+    soup = BeautifulSoup(resp.text, "html.parser")
+
+    # Extract title
+    title = soup.title.string.strip() if soup.title and soup.title.string else urlparse(url).netloc
+    slug = _slugify(title)
+
+    # Create directory for this document
+    doc_dir = raw_dir / slug
+    doc_dir.mkdir(parents=True, exist_ok=True)
+    images_dir = doc_dir / "images"
+    images_dir.mkdir(exist_ok=True)
+
+    # Extract main content (try article tag, then body)
+    article = soup.find("article") or soup.find("main") or soup.body
+    if article is None:
+        article = soup
+
+    # Download images and rewrite URLs
+    for img in article.find_all("img"):
+        src = img.get("src")
+        if not src:
+            continue
+        try:
+            if src.startswith("//"):
+                src = "https:" + src
+            elif src.startswith("/"):
+                parsed = urlparse(url)
+                src = f"{parsed.scheme}://{parsed.netloc}{src}"
+            img_resp = requests.get(src, timeout=15)
+            img_resp.raise_for_status()
+            ext = _guess_ext(src, img_resp.headers.get("content-type", ""))
+            img_hash = hashlib.md5(src.encode()).hexdigest()[:8]
+            img_name = f"{img_hash}{ext}"
+            img_path = images_dir / img_name
+            img_path.write_bytes(img_resp.content)
+            img["src"] = f"images/{img_name}"
+        except Exception:
+            pass  # Skip failed image downloads
+
+    # Convert to markdown (handle deeply nested HTML)
+    import sys
+    old_limit = sys.getrecursionlimit()
+    sys.setrecursionlimit(10000)
+    try:
+        html_str = str(article)
+        # Truncate extremely large pages
+        if len(html_str) > 500000:
+            html_str = html_str[:500000]
+        content = md(html_str, heading_style="ATX", strip=["script", "style", "nav"])
+    except RecursionError:
+        # Fallback: extract text directly
+        content = article.get_text(separator="\n\n", strip=True)
+    finally:
+        sys.setrecursionlimit(old_limit)
+
+    # Create frontmatter
+    post = frontmatter.Post(content)
+    post.metadata["title"] = title
+    post.metadata["source"] = url
+    post.metadata["ingested_at"] = datetime.now(timezone.utc).isoformat()
+    post.metadata["type"] = "web_article"
+    post.metadata["compiled"] = False
+
+    doc_path = doc_dir / "index.md"
+    doc_path.write_text(frontmatter.dumps(post), encoding="utf-8")
+    return doc_path
+
+
+def ingest_file(file_path: str, base_dir: Path | None = None) -> Path:
+    """Copy a local file (paper PDF, markdown, etc.) into raw/."""
+    cfg = load_config(base_dir)
+    ensure_dirs(cfg)
+    raw_dir = Path(cfg["paths"]["raw"])
+
+    src = Path(file_path)
+    if not src.exists():
+        raise FileNotFoundError(f"Source file not found: {file_path}")
+
+    slug = _slugify(src.stem)
+    doc_dir = raw_dir / slug
+    doc_dir.mkdir(parents=True, exist_ok=True)
+
+    dest = doc_dir / src.name
+    shutil.copy2(src, dest)
+
+    # If it's already a markdown file, add frontmatter if missing
+    if src.suffix.lower() in (".md", ".markdown"):
+        post = frontmatter.load(str(dest))
+        if "title" not in post.metadata:
+            post.metadata["title"] = src.stem
+        if "ingested_at" not in post.metadata:
+            post.metadata["ingested_at"] = datetime.now(timezone.utc).isoformat()
+        post.metadata["type"] = "local_file"
+        post.metadata["compiled"] = False
+        dest.write_text(frontmatter.dumps(post), encoding="utf-8")
+    else:
+        # Create a companion metadata file
+        meta = frontmatter.Post("")
+        meta.metadata["title"] = src.stem
+        meta.metadata["source"] = str(src.resolve())
+        meta.metadata["ingested_at"] = datetime.now(timezone.utc).isoformat()
+        meta.metadata["type"] = "local_file"
+        meta.metadata["file"] = src.name
+        meta.metadata["compiled"] = False
+        meta_path = doc_dir / "index.md"
+        meta_path.write_text(frontmatter.dumps(meta), encoding="utf-8")
+
+    return dest
+
+
+def ingest_directory(dir_path: str, base_dir: Path | None = None) -> list[Path]:
+    """Ingest all supported files from a directory."""
+    src_dir = Path(dir_path)
+    if not src_dir.is_dir():
+        raise NotADirectoryError(f"Not a directory: {dir_path}")
+
+    results = []
+    supported = {".md", ".markdown", ".txt", ".pdf", ".py", ".json", ".csv"}
+    for f in sorted(src_dir.iterdir()):
+        if f.is_file() and f.suffix.lower() in supported:
+            results.append(ingest_file(str(f), base_dir))
+    return results
+
+
+def list_raw(base_dir: Path | None = None) -> list[dict]:
+    """List all raw documents with their metadata."""
+    cfg = load_config(base_dir)
+    raw_dir = Path(cfg["paths"]["raw"])
+    if not raw_dir.exists():
+        return []
+
+    docs = []
+    for doc_dir in sorted(raw_dir.iterdir()):
+        if not doc_dir.is_dir():
+            continue
+        index_path = doc_dir / "index.md"
+        if index_path.exists():
+            post = frontmatter.load(str(index_path))
+            docs.append({
+                "path": str(doc_dir),
+                "title": post.metadata.get("title", doc_dir.name),
+                "type": post.metadata.get("type", "unknown"),
+                "compiled": post.metadata.get("compiled", False),
+                "ingested_at": post.metadata.get("ingested_at", ""),
+            })
+        else:
+            # Check for any markdown file
+            md_files = list(doc_dir.glob("*.md"))
+            if md_files:
+                post = frontmatter.load(str(md_files[0]))
+                docs.append({
+                    "path": str(doc_dir),
+                    "title": post.metadata.get("title", doc_dir.name),
+                    "type": post.metadata.get("type", "unknown"),
+                    "compiled": post.metadata.get("compiled", False),
+                    "ingested_at": post.metadata.get("ingested_at", ""),
+                })
+    return docs
+
+
+def _slugify(text: str) -> str:
+    """Convert text to a filesystem-safe slug."""
+    text = text.lower().strip()
+    text = re.sub(r"[^\w\s-]", "", text)
+    text = re.sub(r"[\s_]+", "-", text)
+    text = re.sub(r"-+", "-", text)
+    return text[:80].strip("-")
+
+
+def _guess_ext(url: str, content_type: str) -> str:
+    """Guess image file extension."""
+    ct_map = {
+        "image/png": ".png",
+        "image/jpeg": ".jpg",
+        "image/gif": ".gif",
+        "image/webp": ".webp",
+        "image/svg+xml": ".svg",
+    }
+    for ct, ext in ct_map.items():
+        if ct in content_type:
+            return ext
+    # Try from URL
+    path = urlparse(url).path
+    for ext in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"):
+        if path.lower().endswith(ext):
+            return ext
+    return ".png"

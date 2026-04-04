@@ -1,0 +1,198 @@
+@import "tailwindcss";
+
+/* ─── Theme tokens via CSS custom properties ─────────────── */
+
+:root {
+  /* Light theme (default) — "The Scholarly Synthesis" */
+  --c-bg: #F8FAFC;
+  --c-bg-dim: #F1F5F9;
+  --c-surface: #F8FAFC;
+  --c-surface-low: #F1F5F9;
+  --c-surface-container: #FFFFFF;
+  --c-surface-high: #F1F5F9;
+  --c-surface-highest: #E2E8F0;
+  --c-surface-bright: #FFFFFF;
+
+  --c-primary: #4F46E5;
+  --c-primary-container: #E0E7FF;
+  --c-on-primary: #FFFFFF;
+  --c-on-primary-container: #3730A3;
+
+  --c-secondary: #0891B2;
+  --c-secondary-container: #CFFAFE;
+  --c-on-secondary: #FFFFFF;
+
+  --c-tertiary: #059669;
+  --c-tertiary-container: #D1FAE5;
+  --c-on-tertiary: #FFFFFF;
+
+  --c-error: #E11D48;
+  --c-error-container: #FFE4E6;
+  --c-warning: #D97706;
+
+  --c-on-surface: #0F172A;
+  --c-on-surface-variant: #475569;
+  --c-outline: #94A3B8;
+  --c-outline-variant: #E2E8F0;
+
+  --c-shadow: 0 1px 3px rgba(15, 23, 42, 0.08), 0 1px 2px rgba(15, 23, 42, 0.04);
+  --c-shadow-lg: 0 4px 16px rgba(15, 23, 42, 0.08);
+
+  --c-table-stripe: rgba(241, 245, 249, 0.6);
+  --c-wiki-link: #4F46E5;
+}
+
+.dark {
+  /* Dark theme — Stitch Material Design 3 */
+  --c-bg: #0c1324;
+  --c-bg-dim: #070d1f;
+  --c-surface: #0c1324;
+  --c-surface-low: #151b2d;
+  --c-surface-container: #191f31;
+  --c-surface-high: #23293c;
+  --c-surface-highest: #2e3447;
+  --c-surface-bright: #33394c;
+
+  --c-primary: #bdc2ff;
+  --c-primary-container: #444fb7;
+  --c-on-primary: #131e8c;
+  --c-on-primary-container: #cccfff;
+
+  --c-secondary: #5de6ff;
+  --c-secondary-container: #004e5a;
+  --c-on-secondary: #00363e;
+
+  --c-tertiary: #45dfa4;
+  --c-tertiary-container: #006848;
+  --c-on-tertiary: #003825;
+
+  --c-error: #ffb4ab;
+  --c-error-container: #93000a;
+  --c-warning: #FFB020;
+
+  --c-on-surface: #dce1fb;
+  --c-on-surface-variant: #c5c5d4;
+  --c-outline: #8f909e;
+  --c-outline-variant: #454652;
+
+  --c-shadow: none;
+  --c-shadow-lg: none;
+
+  --c-table-stripe: rgba(46, 52, 71, 0.3);
+  --c-wiki-link: #45dfa4;
+}
+
+/* ─── Tailwind theme binding ─────────────────────────────── */
+
+@theme {
+  --color-bg: var(--c-bg);
+  --color-bg-dim: var(--c-bg-dim);
+  --color-surface: var(--c-surface);
+  --color-surface-low: var(--c-surface-low);
+  --color-surface-container: var(--c-surface-container);
+  --color-surface-high: var(--c-surface-high);
+  --color-surface-highest: var(--c-surface-highest);
+  --color-surface-bright: var(--c-surface-bright);
+
+  --color-primary: var(--c-primary);
+  --color-primary-container: var(--c-primary-container);
+  --color-on-primary: var(--c-on-primary);
+  --color-on-primary-container: var(--c-on-primary-container);
+
+  --color-secondary: var(--c-secondary);
+  --color-secondary-container: var(--c-secondary-container);
+  --color-on-secondary: var(--c-on-secondary);
+
+  --color-tertiary: var(--c-tertiary);
+  --color-tertiary-container: var(--c-tertiary-container);
+  --color-on-tertiary: var(--c-on-tertiary);
+
+  --color-error: var(--c-error);
+  --color-error-container: var(--c-error-container);
+
+  --color-on-surface: var(--c-on-surface);
+  --color-on-surface-variant: var(--c-on-surface-variant);
+  --color-outline: var(--c-outline);
+  --color-outline-variant: var(--c-outline-variant);
+
+  --font-headline: "Noto Serif SC", serif;
+  --font-body: "Noto Serif SC", serif;
+  --font-label: "Inter", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+}
+
+/* ─── Base styles ────────────────────────────────────────── */
+
+body {
+  margin: 0;
+  background: var(--c-bg);
+  color: var(--c-on-surface);
+  font-family: var(--font-label);
+  -webkit-font-smoothing: antialiased;
+  transition: background-color 0.2s, color 0.2s;
+}
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--c-outline-variant); border-radius: 3px; }
+
+.material-symbols-outlined {
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  user-select: none;
+}
+
+/* ─── Prose / Markdown ───────────────────────────────────── */
+
+.prose-article { font-family: var(--font-body); line-height: 1.8; font-size: 16px; }
+.prose-article h1 { font-size: 1.875rem; font-weight: 700; margin: 2rem 0 1rem; font-family: var(--font-headline); }
+.prose-article h2 { font-size: 1.5rem; font-weight: 600; margin: 1.75rem 0 0.75rem; color: var(--c-primary); font-family: var(--font-headline); }
+.prose-article h3 { font-size: 1.25rem; font-weight: 600; margin: 1.5rem 0 0.5rem; font-family: var(--font-headline); }
+.prose-article p { margin-bottom: 1rem; }
+.prose-article ul, .prose-article ol { margin: 0.5rem 0 1rem 1.5rem; }
+.prose-article li { margin-bottom: 0.375rem; }
+.prose-article blockquote {
+  border-left: 3px solid var(--c-primary-container);
+  padding: 0.75rem 1rem; margin: 1rem 0;
+  color: var(--c-on-surface-variant);
+  background: var(--c-surface-low);
+  border-radius: 0 8px 8px 0;
+}
+.prose-article pre {
+  background: var(--c-bg-dim); padding: 1rem; border-radius: 8px;
+  overflow-x: auto; margin: 1rem 0;
+  font-family: var(--font-mono); font-size: 0.875rem; line-height: 1.6;
+}
+.prose-article code {
+  font-family: var(--font-mono); font-size: 0.875em;
+  background: var(--c-surface-high); padding: 2px 6px; border-radius: 4px;
+}
+.prose-article pre code { background: none; padding: 0; }
+.prose-article table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: 0.9rem; }
+.prose-article th { text-align: left; padding: 0.625rem 0.75rem; border-bottom: 2px solid var(--c-outline-variant); font-weight: 600; color: var(--c-primary); }
+.prose-article td { padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--c-outline-variant); }
+.prose-article tr:nth-child(even) td { background: var(--c-table-stripe); }
+.prose-article a { color: var(--c-secondary); }
+.prose-article a:hover { text-decoration: underline; }
+.prose-article hr { border: none; border-top: 1px solid var(--c-outline-variant); margin: 1.5rem 0; }
+.prose-article strong { font-weight: 600; }
+.prose-article img { max-width: 100%; border-radius: 8px; margin: 1rem 0; }
+
+.wiki-link { color: var(--c-wiki-link); cursor: pointer; border-bottom: 1px dashed var(--c-wiki-link); transition: opacity 0.15s; }
+.wiki-link:hover { opacity: 0.7; }
+
+/* ─── Animations ─────────────────────────────────────────── */
+
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+.shimmer {
+  background: linear-gradient(90deg, var(--c-surface-high) 25%, var(--c-surface-highest) 50%, var(--c-surface-high) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 8px;
+}
+
+/* ─── Light-mode card shadows ────────────────────────────── */
+:root:not(.dark) .card-shadow { box-shadow: var(--c-shadow); }
+:root:not(.dark) .card-shadow-lg { box-shadow: var(--c-shadow-lg); }

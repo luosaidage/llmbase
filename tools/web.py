@@ -1,0 +1,145 @@
+"""Web UI server — serves React frontend + API endpoints."""
+
+import json
+from pathlib import Path
+
+import frontmatter
+from flask import Flask, request, jsonify, send_from_directory
+
+from .config import load_config, ensure_dirs
+from .search import search
+from .query import query, query_with_search
+from .ingest import ingest_url, list_raw
+from .compile import compile_new, rebuild_index
+from .lint import lint
+
+
+def create_web_app(base_dir: Path | None = None):
+    """Create the full web application."""
+    base = Path(base_dir) if base_dir else Path.cwd()
+    static_dir = Path(__file__).resolve().parent.parent / "static" / "dist"
+
+    app = Flask(__name__, static_folder=None)
+
+    # ─── API Routes ────────────────────────────────────────────
+
+    @app.route("/api/stats")
+    def api_stats():
+        cfg = load_config(base)
+        raw_dir = Path(cfg["paths"]["raw"])
+        concepts_dir = Path(cfg["paths"]["concepts"])
+        outputs_dir = Path(cfg["paths"]["outputs"])
+
+        raw_count = len(list(raw_dir.glob("*"))) if raw_dir.exists() else 0
+        article_count = len(list(concepts_dir.glob("*.md"))) if concepts_dir.exists() else 0
+        output_count = len(list(outputs_dir.glob("*.md"))) if outputs_dir.exists() else 0
+
+        total_words = 0
+        if concepts_dir.exists():
+            for f in concepts_dir.glob("*.md"):
+                total_words += len(f.read_text().split())
+
+        return jsonify({
+            "raw_count": raw_count,
+            "article_count": article_count,
+            "output_count": output_count,
+            "total_words": total_words,
+        })
+
+    @app.route("/api/articles")
+    def api_articles():
+        cfg = load_config(base)
+        concepts_dir = Path(cfg["paths"]["concepts"])
+        arts = []
+        if concepts_dir.exists():
+            for md_file in sorted(concepts_dir.glob("*.md")):
+                post = frontmatter.load(str(md_file))
+                arts.append({
+                    "slug": md_file.stem,
+                    "title": post.metadata.get("title", md_file.stem),
+                    "summary": post.metadata.get("summary", ""),
+                    "tags": post.metadata.get("tags", []),
+                })
+        return jsonify({"articles": arts})
+
+    @app.route("/api/articles/<slug>")
+    def api_article(slug):
+        cfg = load_config(base)
+        concepts_dir = Path(cfg["paths"]["concepts"])
+        article_path = concepts_dir / f"{slug}.md"
+        if not article_path.exists():
+            return jsonify({"status": "error", "message": f"Article not found: {slug}"})
+        post = frontmatter.load(str(article_path))
+        return jsonify({
+            "status": "ok",
+            "slug": slug,
+            "title": post.metadata.get("title", slug),
+            "summary": post.metadata.get("summary", ""),
+            "tags": post.metadata.get("tags", []),
+            "content": post.content,
+        })
+
+    @app.route("/api/search")
+    def api_search():
+        q = request.args.get("q", "")
+        top_k = int(request.args.get("top_k", 10))
+        results = search(q, top_k=top_k, base_dir=base)
+        return jsonify({"query": q, "results": results})
+
+    @app.route("/api/ask", methods=["POST"])
+    def api_ask():
+        data = request.json
+        q = data.get("question", "")
+        deep = data.get("deep", False)
+        file_back = data.get("file_back", True)
+        if deep:
+            answer = query_with_search(q, base)
+        else:
+            answer = query(q, file_back=file_back, base_dir=base)
+        return jsonify({"answer": answer})
+
+    @app.route("/api/sources")
+    def api_sources():
+        docs = list_raw(base)
+        return jsonify({"documents": docs})
+
+    @app.route("/api/ingest", methods=["POST"])
+    def api_ingest():
+        data = request.json
+        source = data.get("source", "")
+        path = ingest_url(source, base)
+        return jsonify({"status": "ok", "path": str(path)})
+
+    @app.route("/api/compile", methods=["POST"])
+    def api_compile():
+        articles = compile_new(base)
+        return jsonify({"status": "ok", "articles_created": len(articles)})
+
+    @app.route("/api/lint", methods=["POST"])
+    def api_lint():
+        data = request.json or {}
+        if data.get("deep"):
+            from .lint import lint_deep
+            report = lint_deep(base)
+            return jsonify({"report": report})
+        else:
+            results = lint(base)
+            return jsonify({"results": results})
+
+    @app.route("/api/index/rebuild", methods=["POST"])
+    def api_rebuild_index():
+        entries = rebuild_index(base)
+        return jsonify({"status": "ok", "article_count": len(entries)})
+
+    # ─── SPA Fallback ──────────────────────────────────────────
+
+    @app.route("/", defaults={"path": ""})
+    @app.route("/<path:path>")
+    def serve_spa(path):
+        # Serve static file if it exists, otherwise fall back to index.html
+        file_path = static_dir / path
+        if path and file_path.exists():
+            return send_from_directory(str(static_dir), path)
+        return send_from_directory(str(static_dir), "index.html")
+
+    return app

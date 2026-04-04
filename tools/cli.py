@@ -1,0 +1,368 @@
+"""Main CLI entry point for LLMBase."""
+
+from pathlib import Path
+
+import click
+from rich.console import Console
+from rich.table import Table
+from rich.panel import Panel
+from rich.markdown import Markdown
+
+from .config import load_config, ensure_dirs
+
+console = Console()
+
+
+@click.group()
+@click.option("--base-dir", type=click.Path(exists=True), default=".", help="Project base directory")
+@click.pass_context
+def cli(ctx, base_dir):
+    """LLMBase - LLM-powered personal knowledge base."""
+    ctx.ensure_object(dict)
+    ctx.obj["base_dir"] = Path(base_dir).resolve()
+
+
+# ─── Ingest commands ───────────────────────────────────────────────
+
+@cli.group()
+def ingest():
+    """Ingest raw documents into the knowledge base."""
+    pass
+
+
+@ingest.command("url")
+@click.argument("url")
+@click.pass_context
+def ingest_url_cmd(ctx, url):
+    """Ingest a web article by URL."""
+    from .ingest import ingest_url
+    with console.status("Fetching and converting..."):
+        path = ingest_url(url, ctx.obj["base_dir"])
+    console.print(f"[green]✓[/green] Ingested to: {path}")
+
+
+@ingest.command("file")
+@click.argument("file_path", type=click.Path(exists=True))
+@click.pass_context
+def ingest_file_cmd(ctx, file_path):
+    """Ingest a local file."""
+    from .ingest import ingest_file
+    path = ingest_file(file_path, ctx.obj["base_dir"])
+    console.print(f"[green]✓[/green] Ingested to: {path}")
+
+
+@ingest.command("dir")
+@click.argument("dir_path", type=click.Path(exists=True))
+@click.pass_context
+def ingest_dir_cmd(ctx, dir_path):
+    """Ingest all supported files from a directory."""
+    from .ingest import ingest_directory
+    with console.status("Ingesting directory..."):
+        paths = ingest_directory(dir_path, ctx.obj["base_dir"])
+    console.print(f"[green]✓[/green] Ingested {len(paths)} files")
+
+
+@ingest.command("browse")
+@click.argument("url")
+@click.pass_context
+def ingest_browse_cmd(ctx, url):
+    """Ingest a web page via opencli browser (uses your local Chrome session)."""
+    from .browser import is_opencli_available, fetch_article
+    from .ingest import ingest_url
+
+    if not is_opencli_available():
+        console.print("[yellow]opencli not found. Install: npm install -g @jackwener/opencli[/yellow]")
+        console.print("[dim]Falling back to HTTP fetch...[/dim]")
+        with console.status("Fetching..."):
+            path = ingest_url(url, ctx.obj["base_dir"])
+        console.print(f"[green]✓[/green] Ingested to: {path}")
+        return
+
+    with console.status("Browsing with opencli..."):
+        article = fetch_article(url)
+
+    if article.get("error"):
+        console.print(f"[red]Browser fetch failed: {article['error']}[/red]")
+        console.print("[dim]Falling back to HTTP fetch...[/dim]")
+        with console.status("Fetching..."):
+            path = ingest_url(url, ctx.obj["base_dir"])
+        console.print(f"[green]✓[/green] Ingested to: {path}")
+    else:
+        # Save as raw document
+        from .ingest import _slugify
+        from datetime import datetime, timezone
+        import frontmatter as fm
+        raw_dir = Path(ctx.obj["base_dir"]) / "raw"
+        slug = _slugify(article["title"] or "untitled")
+        doc_dir = raw_dir / slug
+        doc_dir.mkdir(parents=True, exist_ok=True)
+        post = fm.Post(article["content"])
+        post.metadata["title"] = article["title"]
+        post.metadata["source"] = url
+        post.metadata["ingested_at"] = datetime.now(timezone.utc).isoformat()
+        post.metadata["type"] = "browser_article"
+        post.metadata["compiled"] = False
+        doc_path = doc_dir / "index.md"
+        doc_path.write_text(fm.dumps(post), encoding="utf-8")
+        console.print(f"[green]✓[/green] Ingested via browser to: {doc_path}")
+
+
+@ingest.command("list")
+@click.pass_context
+def ingest_list_cmd(ctx):
+    """List all raw documents."""
+    from .ingest import list_raw
+    docs = list_raw(ctx.obj["base_dir"])
+    if not docs:
+        console.print("[yellow]No raw documents found.[/yellow]")
+        return
+
+    table = Table(title="Raw Documents")
+    table.add_column("Title", style="cyan")
+    table.add_column("Type", style="green")
+    table.add_column("Compiled", style="yellow")
+    table.add_column("Ingested At")
+
+    for doc in docs:
+        compiled = "✓" if doc["compiled"] else "✗"
+        table.add_row(doc["title"], doc["type"], compiled, doc["ingested_at"][:10])
+
+    console.print(table)
+
+
+# ─── Compile commands ──────────────────────────────────────────────
+
+@cli.group()
+def compile():
+    """Compile raw documents into the wiki."""
+    pass
+
+
+@compile.command("new")
+@click.option("--batch-size", type=int, default=None, help="Max documents to process")
+@click.pass_context
+def compile_new_cmd(ctx, batch_size):
+    """Compile only new/unprocessed raw documents."""
+    from .compile import compile_new
+    with console.status("Compiling new documents..."):
+        articles = compile_new(ctx.obj["base_dir"], batch_size)
+    if articles:
+        console.print(f"[green]✓[/green] Created {len(articles)} articles:")
+        for a in articles:
+            console.print(f"  • {a}")
+    else:
+        console.print("[yellow]No new documents to compile.[/yellow]")
+
+
+@compile.command("all")
+@click.pass_context
+def compile_all_cmd(ctx):
+    """Recompile all raw documents (reset and rebuild)."""
+    from .compile import compile_all
+    with console.status("Recompiling all documents..."):
+        articles = compile_all(ctx.obj["base_dir"])
+    console.print(f"[green]✓[/green] Compiled {len(articles)} articles")
+
+
+@compile.command("index")
+@click.pass_context
+def compile_index_cmd(ctx):
+    """Rebuild the wiki index without recompiling articles."""
+    from .compile import rebuild_index
+    entries = rebuild_index(ctx.obj["base_dir"])
+    console.print(f"[green]✓[/green] Index rebuilt with {len(entries)} articles")
+
+
+# ─── Query commands ────────────────────────────────────────────────
+
+@cli.command()
+@click.argument("question")
+@click.option("--format", "output_format", type=click.Choice(["markdown", "marp", "chart"]), default="markdown")
+@click.option("--file-back", is_flag=True, help="Save the answer back into the wiki")
+@click.option("--deep", is_flag=True, help="Use multi-step search for complex queries")
+@click.pass_context
+def query(ctx, question, output_format, file_back, deep):
+    """Ask a question against the knowledge base."""
+    from .query import query as do_query, query_with_search
+
+    with console.status("Researching..."):
+        if deep:
+            answer = query_with_search(question, ctx.obj["base_dir"])
+        else:
+            answer = do_query(question, output_format, file_back, ctx.obj["base_dir"])
+
+    console.print(Panel(Markdown(answer), title="Answer", border_style="green"))
+
+    if file_back:
+        console.print("[dim]Answer filed back to wiki/outputs/[/dim]")
+
+
+# ─── Search commands ───────────────────────────────────────────────
+
+@cli.group()
+def search():
+    """Search the knowledge base."""
+    pass
+
+
+@search.command("query")
+@click.argument("query_text")
+@click.option("--top-k", type=int, default=10)
+@click.option("--json-output", is_flag=True, help="Output as JSON (for LLM tool use)")
+@click.pass_context
+def search_query_cmd(ctx, query_text, top_k, json_output):
+    """Full-text search over the wiki."""
+    from .search import search as do_search, search_cli
+    import json
+
+    if json_output:
+        results = do_search(query_text, top_k, ctx.obj["base_dir"])
+        click.echo(json.dumps(results, indent=2))
+    else:
+        output = search_cli(query_text, ctx.obj["base_dir"])
+        console.print(output)
+
+
+@search.command("serve")
+@click.option("--port", type=int, default=None)
+@click.pass_context
+def search_serve_cmd(ctx, port):
+    """Start the search web UI."""
+    from .search import create_search_app
+
+    cfg = load_config(ctx.obj["base_dir"])
+    if port is None:
+        port = cfg.get("search", {}).get("port", 5555)
+
+    app = create_search_app(ctx.obj["base_dir"])
+    console.print(f"[green]Search UI running at http://localhost:{port}[/green]")
+    app.run(host="0.0.0.0", port=port, debug=False)
+
+
+# ─── Lint commands ─────────────────────────────────────────────────
+
+@cli.group()
+def lint():
+    """Run health checks on the knowledge base."""
+    pass
+
+
+@lint.command("check")
+@click.pass_context
+def lint_check_cmd(ctx):
+    """Run structural lint checks."""
+    from .lint import lint as do_lint
+
+    results = do_lint(ctx.obj["base_dir"])
+
+    for category, issues in results.items():
+        if category == "total_issues":
+            continue
+        if issues:
+            console.print(f"\n[bold red]{category}[/bold red] ({len(issues)} issues):")
+            for issue in issues:
+                console.print(f"  • {issue}")
+
+    total = results["total_issues"]
+    if total == 0:
+        console.print("[green]✓ No issues found![/green]")
+    else:
+        console.print(f"\n[yellow]Total: {total} issues[/yellow]")
+
+
+@lint.command("deep")
+@click.pass_context
+def lint_deep_cmd(ctx):
+    """Use LLM for deep content quality check."""
+    from .lint import lint_deep
+
+    with console.status("Running deep analysis..."):
+        report = lint_deep(ctx.obj["base_dir"])
+
+    console.print(Panel(Markdown(report), title="Deep Lint Report", border_style="yellow"))
+
+
+@lint.command("fix")
+@click.pass_context
+def lint_fix_cmd(ctx):
+    """Auto-fix common issues using LLM."""
+    from .lint import auto_fix
+
+    with console.status("Auto-fixing issues..."):
+        fixes = auto_fix(ctx.obj["base_dir"])
+
+    if fixes:
+        for fix in fixes:
+            console.print(f"[green]✓[/green] {fix}")
+    else:
+        console.print("[green]Nothing to fix.[/green]")
+
+
+# ─── Stats command ─────────────────────────────────────────────────
+
+@cli.command()
+@click.pass_context
+def stats(ctx):
+    """Show knowledge base statistics."""
+    cfg = load_config(ctx.obj["base_dir"])
+    raw_dir = Path(cfg["paths"]["raw"])
+    concepts_dir = Path(cfg["paths"]["concepts"])
+    outputs_dir = Path(cfg["paths"]["outputs"])
+
+    raw_count = len(list(raw_dir.glob("*"))) if raw_dir.exists() else 0
+    article_count = len(list(concepts_dir.glob("*.md"))) if concepts_dir.exists() else 0
+    output_count = len(list(outputs_dir.glob("*.md"))) if outputs_dir.exists() else 0
+
+    # Count total words
+    total_words = 0
+    if concepts_dir.exists():
+        for f in concepts_dir.glob("*.md"):
+            total_words += len(f.read_text().split())
+
+    table = Table(title="Knowledge Base Stats")
+    table.add_column("Metric", style="cyan")
+    table.add_column("Value", style="green", justify="right")
+
+    table.add_row("Raw documents", str(raw_count))
+    table.add_row("Wiki articles", str(article_count))
+    table.add_row("Filed outputs", str(output_count))
+    table.add_row("Total words", f"{total_words:,}")
+
+    console.print(table)
+
+
+# ─── Serve command (agent API) ─────────────────────────────────────
+
+@cli.command()
+@click.option("--port", type=int, default=5556)
+@click.pass_context
+def serve(ctx, port):
+    """Start the agent-facing HTTP API server."""
+    from .agent_api import create_agent_server
+
+    app = create_agent_server(ctx.obj["base_dir"], port)
+    console.print(f"[green]Agent API running at http://localhost:{port}[/green]")
+    console.print("[dim]Endpoints: /api/ingest, /api/compile, /api/ask, /api/search, /api/articles, /api/lint[/dim]")
+    app.run(host="0.0.0.0", port=port, debug=False)
+
+
+# ─── Web UI command ──────────────────────────────────────────────���─
+
+@cli.command()
+@click.option("--port", type=int, default=5555)
+@click.pass_context
+def web(ctx, port):
+    """Start the full web UI (browsing, search, Q&A)."""
+    from .web import create_web_app
+
+    app = create_web_app(ctx.obj["base_dir"])
+    console.print(f"[green]Web UI running at http://localhost:{port}[/green]")
+    app.run(host="0.0.0.0", port=port, debug=False)
+
+
+def main():
+    cli()
+
+
+if __name__ == "__main__":
+    main()

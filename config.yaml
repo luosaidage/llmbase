@@ -1,0 +1,24 @@
+# LLMBase Configuration
+# LLM provider is configured via .env file:
+#   LLMBASE_API_KEY, LLMBASE_BASE_URL, LLMBASE_MODEL
+# See .env.example for setup instructions.
+
+llm:
+  max_tokens: 8192
+
+paths:
+  raw: "./raw"
+  wiki: "./wiki"
+  outputs: "./wiki/outputs"
+  meta: "./wiki/_meta"
+  concepts: "./wiki/concepts"
+
+compile:
+  batch_size: 10
+  backlinks: true
+
+search:
+  port: 5555
+
+lint:
+  web_search: false
