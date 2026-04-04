@@ -93,7 +93,7 @@ raw/  ──LLM compile──>  wiki/  ──query/lint──>  wiki/ (enhanced)
 
 ```bash
 # Clone
-git clone https://github.com/YOUR_USERNAME/llmbase.git
+git clone https://github.com/Hosuke/llmbase.git
 cd llmbase
 
 # Backend
@@ -234,7 +234,7 @@ LLMBase 是一个 **LLM 驱动的个人知识库系统**，灵感来自 [Karpath
 
 ```bash
 # 克隆
-git clone https://github.com/YOUR_USERNAME/llmbase.git
+git clone https://github.com/Hosuke/llmbase.git
 cd llmbase
 
 # 安装后端
