@@ -207,6 +207,21 @@ def create_web_app(base_dir: Path | None = None):
             results = lint(base)
             return jsonify({"results": results})
 
+    @app.route("/api/wiki/export")
+    def api_wiki_export():
+        """Export all wiki articles as JSON (for backup/sync)."""
+        cfg = load_config(base)
+        concepts_dir = Path(cfg["paths"]["concepts"])
+        articles = {}
+        if concepts_dir.exists():
+            for md_file in sorted(concepts_dir.glob("*.md")):
+                post = frontmatter.load(str(md_file))
+                articles[md_file.stem] = {
+                    "metadata": dict(post.metadata),
+                    "content": post.content,
+                }
+        return jsonify({"articles": articles, "count": len(articles)})
+
     @app.route("/api/index/rebuild", methods=["POST"])
     def api_rebuild_index():
         entries = rebuild_index(base)
