@@ -56,7 +56,15 @@ async function post<T>(url: string, body?: unknown): Promise<T> {
   return res.json();
 }
 
+export interface Collection {
+  id: string;
+  label: string;
+  count: number;
+  articles: { slug: string; title: string; summary: string }[];
+}
+
 export const api = {
+  getCollections: () => get<{ collections: Collection[] }>('/api/collections').then(d => d.collections),
   getStats: () => get<Stats>('/api/stats'),
   getArticles: () => get<{ articles: Article[] }>('/api/articles').then(d => d.articles),
   getArticle: (slug: string) => get<Article>('/api/articles/' + slug),

@@ -60,6 +60,41 @@ def create_web_app(base_dir: Path | None = None):
             "total_words": total_words,
         })
 
+    @app.route("/api/collections")
+    def api_collections():
+        """Group articles into collections by tags."""
+        cfg = load_config(base)
+        concepts_dir = Path(cfg["paths"]["concepts"])
+        collections: dict[str, list] = {}
+
+        if concepts_dir.exists():
+            for md_file in sorted(concepts_dir.glob("*.md")):
+                post = frontmatter.load(str(md_file))
+                tags = post.metadata.get("tags", [])
+                entry = {
+                    "slug": md_file.stem,
+                    "title": post.metadata.get("title", md_file.stem),
+                    "summary": post.metadata.get("summary", ""),
+                }
+                if not tags:
+                    tags = ["uncategorized"]
+                for tag in tags:
+                    collections.setdefault(tag, []).append(entry)
+
+        # Also build from config if defined
+        configured = cfg.get("collections", {})
+        result = []
+        for tag in sorted(collections.keys()):
+            label = configured.get(tag, {}).get("label", tag.title()) if isinstance(configured.get(tag), dict) else tag.title()
+            result.append({
+                "id": tag,
+                "label": label,
+                "count": len(collections[tag]),
+                "articles": collections[tag],
+            })
+
+        return jsonify({"collections": result})
+
     @app.route("/api/articles")
     def api_articles():
         cfg = load_config(base)
