@@ -4,7 +4,7 @@
 
 **LLM-powered personal knowledge base**
 
-Inspired by [Karpathy's approach](https://x.com/karpathy/status/2039805659525644595) — raw data goes in, an LLM compiles it into a structured, interlinked wiki, and you query & enhance it over time.
+Inspired by [Karpathy's LLM Knowledge Base pattern](https://x.com/karpathy/status/2039805659525644595) ([detailed design](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)) — raw data goes in, an LLM compiles it into a structured, interlinked wiki, and you query & enhance it over time.
 
 No vector database. No embeddings pipeline. Just markdown, an LLM, and a clean UI.
 
