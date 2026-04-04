@@ -78,7 +78,9 @@ Source document:
 {content[:15000]}
 ---
 
-Existing concepts in the wiki: {', '.join(existing_concepts) if existing_concepts else 'None yet'}
+Existing concepts in the wiki (REUSE these slugs if the concept matches, do NOT create duplicates): {', '.join(existing_concepts) if existing_concepts else 'None yet'}
+
+IMPORTANT: If a concept already exists above, use ===UPDATE=== with the existing slug instead of creating a new ===ARTICLE===.
 
 Please:
 1. Identify the key concepts from this document (1-5 concepts)
@@ -332,18 +334,26 @@ def _parse_update_block(block: str) -> dict | None:
 
 
 def _write_article(article: dict, concepts_dir: Path) -> Path | None:
-    """Write or update an article file."""
+    """Write or update an article file. Merges into existing articles."""
     slug = article["slug"]
     article_path = concepts_dir / f"{slug}.md"
 
-    if article.get("type") == "update" and article_path.exists():
-        # Append to existing article
+    if article_path.exists():
+        # Article exists — merge new content into it (叠加进化, not 清零)
         existing = frontmatter.load(str(article_path))
-        existing.content += f"\n\n---\n\n{article['content']}"
-        article_path.write_text(frontmatter.dumps(existing), encoding="utf-8")
+        new_content = article.get("content", "")
+        if new_content and new_content not in existing.content:
+            existing.content += f"\n\n---\n\n{new_content}"
+            existing.metadata["updated"] = datetime.now(timezone.utc).isoformat()
+            # Merge tags
+            old_tags = set(existing.metadata.get("tags", []))
+            new_tags = set(article.get("tags", []))
+            existing.metadata["tags"] = sorted(old_tags | new_tags)
+            article_path.write_text(frontmatter.dumps(existing), encoding="utf-8")
         return article_path
 
-    if article.get("type") == "new" or not article_path.exists():
+    # New article
+    if article.get("type") in ("new", "update") or not article_path.exists():
         post = frontmatter.Post(article.get("content", ""))
         post.metadata["title"] = article.get("title", slug)
         post.metadata["summary"] = article.get("summary", "")
