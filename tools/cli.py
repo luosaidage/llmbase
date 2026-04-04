@@ -51,6 +51,20 @@ def ingest_file_cmd(ctx, file_path):
     console.print(f"[green]✓[/green] Ingested to: {path}")
 
 
+@ingest.command("pdf")
+@click.argument("pdf_path", type=click.Path(exists=True))
+@click.option("--chunk-pages", type=int, default=20, help="Pages per chunk (0 = single doc)")
+@click.pass_context
+def ingest_pdf_cmd(ctx, pdf_path, chunk_pages):
+    """Ingest a PDF file, converting to markdown chunks automatically."""
+    from .pdf import ingest_pdf
+    with console.status(f"Processing PDF ({chunk_pages} pages/chunk)..."):
+        paths = ingest_pdf(pdf_path, chunk_pages, ctx.obj["base_dir"])
+    console.print(f"[green]✓[/green] Ingested PDF into {len(paths)} chunks:")
+    for p in paths:
+        console.print(f"  • {p}")
+
+
 @ingest.command("dir")
 @click.argument("dir_path", type=click.Path(exists=True))
 @click.pass_context
