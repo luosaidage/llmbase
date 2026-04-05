@@ -314,9 +314,23 @@ def _find_duplicate_candidates(articles: list[dict]) -> list[tuple[str, str]]:
     - Slug substring overlap (e.g., si-di vs si-di-buddhism)
     - High tag overlap (>= 60% Jaccard)
     - Title similarity (shared CJK characters)
+    - Bilingual title cross-match (e.g., both have "仁" in Chinese title part)
     """
     candidates = []
     n = len(articles)
+
+    # Extract CJK title parts for cross-matching
+    def _cjk_parts(title: str) -> set[str]:
+        """Extract CJK substrings from bilingual title."""
+        import re
+        parts = set()
+        for segment in title.split("/"):
+            segment = segment.strip()
+            # Extract CJK-only portion
+            cjk = re.sub(r'[^\u4e00-\u9fff\u3400-\u4dbf]', '', segment)
+            if cjk:
+                parts.add(cjk)
+        return parts
 
     for i in range(n):
         for j in range(i + 1, n):
@@ -342,6 +356,12 @@ def _find_duplicate_candidates(articles: list[dict]) -> list[tuple[str, str]]:
                 t_union = len(title_a_chars | title_b_chars)
                 if t_union > 0 and t_intersection / t_union >= 0.5:
                     score += 1
+
+            # Bilingual CJK title match: if both have identical CJK title part
+            cjk_a = _cjk_parts(a["title"])
+            cjk_b = _cjk_parts(b["title"])
+            if cjk_a and cjk_b and cjk_a & cjk_b:
+                score += 3  # Strong signal: same Chinese concept name
 
             if score >= 2:
                 candidates.append((a["slug"], b["slug"]))

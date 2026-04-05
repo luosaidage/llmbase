@@ -147,7 +147,56 @@ def generate_taxonomy(base_dir: Path | None = None) -> dict:
     path.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
     logger.info(f"[taxonomy] Generated {len(result['categories'])} categories for {len(articles)} articles")
 
+    # Sync taxonomy categories back to article tags
+    _sync_taxonomy_to_tags(result.get("categories", []), concepts_dir)
+
     return result
+
+
+def _sync_taxonomy_to_tags(tree: list[dict], concepts_dir: Path, path: list[str] | None = None):
+    """Write taxonomy category path back to article tags.
+
+    For each article assigned in the taxonomy tree, adds a `category:xxx`
+    tag reflecting its position. This unifies taxonomy and wiki tags.
+
+    Example: an article under Buddhism > Practice gets:
+      tags: [...existing..., "category:buddhism", "category:buddhism/practice"]
+    """
+    if path is None:
+        path = []
+
+    for node in tree:
+        node_id = node.get("id", "")
+        current_path = path + [node_id] if node_id else path
+
+        # Tag articles at this node
+        for slug in node.get("article_slugs", []):
+            _apply_category_tags(concepts_dir, slug, current_path)
+
+        # Recurse into children
+        _sync_taxonomy_to_tags(node.get("children", []), concepts_dir, current_path)
+
+
+def _apply_category_tags(concepts_dir: Path, slug: str, category_path: list[str]):
+    """Add category:xxx tags to an article, removing old category tags."""
+    article_path = concepts_dir / f"{slug}.md"
+    if not article_path.exists():
+        return
+
+    post = frontmatter.load(str(article_path))
+    tags = post.metadata.get("tags", [])
+
+    # Remove old category tags
+    tags = [t for t in tags if not t.startswith("category:")]
+
+    # Add new category tags (each level of the path)
+    for i in range(len(category_path)):
+        cat_tag = "category:" + "/".join(category_path[:i + 1])
+        if cat_tag not in tags:
+            tags.append(cat_tag)
+
+    post.metadata["tags"] = tags
+    article_path.write_text(frontmatter.dumps(post), encoding="utf-8")
 
 
 def build_taxonomy(base_dir: Path | None = None, lang: str = "zh") -> list[dict]:

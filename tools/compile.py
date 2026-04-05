@@ -246,10 +246,15 @@ def _load_index(meta_dir: Path) -> list[dict]:
 
 
 def _list_existing_concepts(concepts_dir: Path) -> list[str]:
-    """List existing concept slugs."""
+    """List existing concepts as 'slug (title)' for LLM disambiguation."""
     if not concepts_dir.exists():
         return []
-    return [f.stem for f in concepts_dir.glob("*.md")]
+    results = []
+    for f in concepts_dir.glob("*.md"):
+        post = frontmatter.load(str(f))
+        title = post.metadata.get("title", f.stem)
+        results.append(f"{f.stem} ({title})")
+    return results
 
 
 def _parse_compile_response(response: str) -> list[dict]:
