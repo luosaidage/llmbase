@@ -38,6 +38,7 @@ def lint(base_dir: Path | None = None) -> dict:
         "orphans": check_orphans(cfg),
         "missing_metadata": check_missing_metadata(cfg),
         "duplicates": check_duplicates(cfg),
+        "stubs": check_stubs(cfg),
         "uncategorized": check_uncategorized(cfg, base_dir),
     }
 
@@ -157,6 +158,67 @@ def check_orphans(cfg: dict) -> list[str]:
             issues.append(f"Orphan article (no incoming links): {md_file.stem}")
 
     return issues
+
+
+def check_stubs(cfg: dict) -> list[str]:
+    """Find garbage/empty stub articles that should be cleaned.
+
+    Detects:
+    - Unfilled LLM templates ("English Title / 中文标题")
+    - Stubs with no real content (< 50 chars)
+    - "has not been written yet" placeholder text
+    """
+    issues = []
+    concepts_dir = Path(cfg["paths"]["concepts"])
+
+    for md_file in concepts_dir.glob("*.md"):
+        post = frontmatter.load(str(md_file))
+        title = post.metadata.get("title", "")
+        summary = post.metadata.get("summary", "")
+        content = post.content.strip()
+        slug = md_file.stem
+
+        if "English Title / 中文标题" in title:
+            issues.append(f"Unfilled template: {slug}")
+        elif "One-line summary in English" in summary:
+            issues.append(f"Unfilled template: {slug}")
+        elif "has not been fully written" in content or "has not been written yet" in content:
+            issues.append(f"Placeholder stub: {slug}")
+        elif "尚未完成撰写" in content:
+            issues.append(f"Placeholder stub: {slug}")
+        elif len(content) < 50 and not post.metadata.get("stub"):
+            issues.append(f"Near-empty article: {slug} ({len(content)} chars)")
+
+    return issues
+
+
+def clean_garbage(base_dir: Path | None = None) -> list[str]:
+    """Remove garbage/empty stub articles detected by check_stubs.
+
+    Returns list of removed article slugs.
+    """
+    cfg = load_config(base_dir)
+    ensure_dirs(cfg)
+    concepts_dir = Path(cfg["paths"]["concepts"])
+
+    stubs = check_stubs(cfg)
+    if not stubs:
+        return []
+
+    removed = []
+    for issue in stubs:
+        # Parse "Unfilled template: slug" or "Placeholder stub: slug"
+        slug = issue.split(": ", 1)[-1].split(" (")[0]
+        path = concepts_dir / f"{slug}.md"
+        if path.exists():
+            path.unlink()
+            removed.append(slug)
+
+    if removed:
+        from .compile import rebuild_index
+        rebuild_index(base_dir)
+
+    return removed
 
 
 def check_missing_metadata(cfg: dict) -> list[str]:
@@ -556,13 +618,26 @@ def fix_broken_links(base_dir: Path | None = None, max_stubs: int = 10) -> list[
 
 
 def auto_fix(base_dir: Path | None = None) -> list[str]:
-    """Attempt to auto-fix common lint issues using LLM."""
+    """Attempt to auto-fix common lint issues using LLM.
+
+    Pipeline order:
+    1. Clean garbage stubs (remove before other fixes)
+    2. Fix missing metadata (summary, tags)
+    3. Fix broken links (generate stubs)
+    4. Merge duplicates
+    5. Regenerate taxonomy for uncategorized
+    """
     cfg = load_config(base_dir)
     ensure_dirs(cfg)
     concepts_dir = Path(cfg["paths"]["concepts"])
     fixes = []
 
-    # Fix missing metadata
+    # 1. Clean garbage first
+    garbage = clean_garbage(base_dir)
+    if garbage:
+        fixes.append(f"Cleaned {len(garbage)} garbage article(s): {', '.join(garbage[:5])}")
+
+    # 2. Fix missing metadata
     for md_file in concepts_dir.glob("*.md"):
         post = frontmatter.load(str(md_file))
         needs_fix = False

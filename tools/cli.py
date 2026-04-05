@@ -422,6 +422,27 @@ def lint_fix_cmd(ctx):
         console.print("[green]Nothing to fix.[/green]")
 
 
+@lint.command("clean")
+@click.pass_context
+def lint_clean_cmd(ctx):
+    """Remove garbage/empty stub articles."""
+    from .lint import check_stubs, clean_garbage
+
+    cfg = load_config(ctx.obj["base_dir"])
+    stubs = check_stubs(cfg)
+    if not stubs:
+        console.print("[green]No garbage articles found.[/green]")
+        return
+
+    for s in stubs:
+        console.print(f"  [yellow]![/yellow] {s}")
+
+    console.print(f"\n[cyan]Removing {len(stubs)} garbage article(s)...[/cyan]")
+    removed = clean_garbage(ctx.obj["base_dir"])
+    for r in removed:
+        console.print(f"  [green]✓[/green] Removed: {r}")
+
+
 @lint.command("dedup")
 @click.pass_context
 def lint_dedup_cmd(ctx):
