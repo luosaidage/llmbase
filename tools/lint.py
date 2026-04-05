@@ -167,9 +167,13 @@ def check_stubs(cfg: dict) -> list[str]:
     - Unfilled LLM templates ("English Title / 中文标题")
     - Stubs with no real content (< 50 chars)
     - "has not been written yet" placeholder text
+    - LLM prompt leak in summary ("The user says", "the user wants")
+    - Title is "..." or only dots/punctuation
+    - CJK-only slug (should be pinyin, e.g. "人性善" instead of "ren-xing-shan")
     """
     issues = []
     concepts_dir = Path(cfg["paths"]["concepts"])
+    cjk_re = re.compile(r'^[\u4e00-\u9fff\u3400-\u4dbf]+$')
 
     for md_file in concepts_dir.glob("*.md"):
         post = frontmatter.load(str(md_file))
@@ -182,10 +186,16 @@ def check_stubs(cfg: dict) -> list[str]:
             issues.append(f"Unfilled template: {slug}")
         elif "One-line summary in English" in summary:
             issues.append(f"Unfilled template: {slug}")
+        elif title.replace(".", "").replace("/", "").replace(" ", "") == "":
+            issues.append(f"Empty/garbage title: {slug}")
         elif "has not been fully written" in content or "has not been written yet" in content:
             issues.append(f"Placeholder stub: {slug}")
         elif "尚未完成撰写" in content:
             issues.append(f"Placeholder stub: {slug}")
+        elif any(leak in summary.lower() for leak in ["the user says", "the user wants", "the user asks", "the user is"]):
+            issues.append(f"LLM prompt leak: {slug}")
+        elif cjk_re.match(slug):
+            issues.append(f"CJK slug (should be pinyin): {slug}")
         elif len(content) < 50 and not post.metadata.get("stub"):
             issues.append(f"Near-empty article: {slug} ({len(content)} chars)")
 
