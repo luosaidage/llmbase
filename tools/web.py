@@ -325,16 +325,17 @@ def create_web_app(base_dir: Path | None = None):
 
     @app.route("/api/taxonomy/update", methods=["POST"])
     def api_update_taxonomy():
-        """Upload a new taxonomy.json."""
+        """Upload a new taxonomy.json. Automatically locked to prevent worker overwrite."""
         data = request.json
         if not data or "categories" not in data:
             return jsonify({"status": "error", "message": "Provide {categories: [...]}"})
+        data["locked"] = True  # Prevent worker from overwriting
         cfg = load_config(base)
         meta_dir = Path(cfg["paths"]["meta"])
         meta_dir.mkdir(parents=True, exist_ok=True)
         path = meta_dir / "taxonomy.json"
         path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-        return jsonify({"status": "ok", "categories": len(data["categories"])})
+        return jsonify({"status": "ok", "categories": len(data["categories"]), "locked": True})
 
     @app.route("/api/compile", methods=["POST"])
     def api_compile():

@@ -117,10 +117,17 @@ def _task_compile(base: Path):
 
 
 def _task_taxonomy(base: Path):
-    """Regenerate taxonomy and Xi Ci from current articles."""
+    """Regenerate taxonomy from current articles (unless locked)."""
+    from .taxonomy import load_taxonomy, generate_taxonomy
+
+    # Respect locked taxonomy — don't overwrite manually curated categories
+    existing = load_taxonomy(base)
+    if existing.get("locked"):
+        logger.info("[taxonomy] Taxonomy is locked, skipping regeneration")
+        return
+
     logger.info("[taxonomy] Regenerating category taxonomy...")
     try:
-        from .taxonomy import generate_taxonomy
         taxonomy = generate_taxonomy(base)
         cats = len(taxonomy.get("categories", []))
         logger.info(f"[taxonomy] Generated {cats} categories")
