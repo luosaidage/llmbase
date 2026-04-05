@@ -50,7 +50,7 @@ export function Dashboard() {
             <div className="flex items-center gap-2">
               <Icon name="auto_stories" className="text-primary text-[20px]" />
               <span className="text-xs uppercase tracking-widest text-on-surface-variant">
-                {lang === 'zh' || lang === 'zh-en' ? '系辞 — 导读' : lang === 'ja' ? '系辞 — 導読' : 'Xi Ci — Guided Reading'}
+                {lang === 'zh' || lang === 'zh-en' ? '导读' : lang === 'ja' ? '導読' : 'Guided Reading'}
               </span>
             </div>
             <div className="flex items-center gap-3">
