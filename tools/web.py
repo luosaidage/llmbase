@@ -355,10 +355,30 @@ def create_web_app(base_dir: Path | None = None):
 
     @app.route("/api/lint/fix", methods=["POST"])
     def api_lint_fix():
-        """Run the full auto-fix pipeline: clean → metadata → broken links → dedup → taxonomy."""
+        """Run the full auto-fix pipeline in background thread."""
+        import threading
         from .lint import auto_fix
-        fixes = auto_fix(base)
-        return jsonify({"fixes": fixes, "fix_count": len(fixes)})
+
+        def run_fix():
+            import json, logging
+            logger = logging.getLogger("llmbase.lint")
+            logger.info("[lint/fix] Starting auto-fix pipeline...")
+            try:
+                fixes = auto_fix(base)
+                logger.info(f"[lint/fix] Done! {len(fixes)} fixes applied")
+                # Persist result
+                cfg = load_config(base)
+                meta_dir = Path(cfg["paths"]["meta"])
+                meta_dir.mkdir(parents=True, exist_ok=True)
+                result = {"fixes": fixes, "fix_count": len(fixes), "status": "completed"}
+                (meta_dir / "last_fix.json").write_text(
+                    json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8"
+                )
+            except Exception as e:
+                logger.error(f"[lint/fix] Error: {e}")
+
+        threading.Thread(target=run_fix, daemon=True).start()
+        return jsonify({"status": "started", "message": "Auto-fix pipeline running in background. Check /api/health for results."})
 
     @app.route("/api/health")
     def api_health():
