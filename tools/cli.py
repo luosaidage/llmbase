@@ -422,6 +422,34 @@ def lint_fix_cmd(ctx):
         console.print("[green]Nothing to fix.[/green]")
 
 
+@lint.command("dedup")
+@click.pass_context
+def lint_dedup_cmd(ctx):
+    """Detect and merge duplicate articles using LLM."""
+    from .lint import check_duplicates, merge_duplicates
+
+    cfg = load_config(ctx.obj["base_dir"])
+    console.print("[cyan]Scanning for duplicates...[/cyan]")
+    with console.status("Analyzing article similarity..."):
+        dupes = check_duplicates(cfg)
+
+    if not dupes:
+        console.print("[green]No duplicates found.[/green]")
+        return
+
+    for d in dupes:
+        console.print(f"  [yellow]![/yellow] {d}")
+
+    console.print(f"\n[cyan]Merging {len(dupes)} duplicate pair(s)...[/cyan]")
+    with console.status("Merging..."):
+        fixes = merge_duplicates(ctx.obj["base_dir"])
+
+    for fix in fixes:
+        console.print(f"  [green]✓[/green] {fix}")
+    if not fixes:
+        console.print("  No confirmed merges")
+
+
 @lint.command("heal")
 @click.pass_context
 def lint_heal_cmd(ctx):
