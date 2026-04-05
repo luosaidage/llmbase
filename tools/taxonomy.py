@@ -26,25 +26,31 @@ logger = logging.getLogger("llmbase.taxonomy")
 
 
 TAXONOMY_SYSTEM_PROMPT = """You are a knowledge base architect. Your job is to analyze a collection
-of wiki articles and produce a hierarchical classification system (taxonomy).
+of wiki articles and produce a deep, well-structured hierarchical taxonomy (like a library catalog
+or an academic classification system).
 
 Rules:
 - Derive categories ENTIRELY from the actual content — do not assume any domain
-- Create 3-7 top-level categories (more if the content is very diverse)
-- Each top-level category can have 0-5 subcategories
-- Every article must be assigned to exactly one category (the most specific one that fits)
+- Create a DEEP tree structure — use as many levels as the content naturally supports:
+  * < 20 articles: 2-3 levels deep
+  * 20-100 articles: 3-4 levels deep
+  * 100+ articles: 4-5 levels deep
+- A category with 4+ articles should almost always have subcategories
+- Leaf categories should have 1-3 articles each (fine-grained grouping)
+- Every article must be assigned to exactly one leaf or category
 - Category names must be trilingual: English, 中文, 日本語
 - Use short, clear category names (2-4 words)
 - Group by SEMANTIC similarity, not surface-level keyword matching
+- Think like a librarian: broad → narrow → specific
 - If an article doesn't fit any natural group, put it in an "Other" category
 - Respond with ONLY valid JSON, no markdown fences, no explanation"""
 
-TAXONOMY_PROMPT_TEMPLATE = """Analyze these {count} wiki articles and create a hierarchical taxonomy.
+TAXONOMY_PROMPT_TEMPLATE = """Analyze these {count} wiki articles and create a DEEP hierarchical taxonomy.
 
 Articles:
 {articles}
 
-Produce a JSON array of categories. Each category has this structure:
+Produce a JSON array of categories. The tree can be nested multiple levels deep:
 {{
   "id": "kebab-case-id",
   "label": {{"en": "English Name", "zh": "中文名", "ja": "日本語名"}},
@@ -52,17 +58,26 @@ Produce a JSON array of categories. Each category has this structure:
     {{
       "id": "child-id",
       "label": {{"en": "...", "zh": "...", "ja": "..."}},
-      "children": [],
-      "article_slugs": ["slug1", "slug2"]
+      "children": [
+        {{
+          "id": "grandchild-id",
+          "label": {{"en": "...", "zh": "...", "ja": "..."}},
+          "children": [],
+          "article_slugs": ["slug1"]
+        }}
+      ],
+      "article_slugs": ["slug2"]
     }}
   ],
   "article_slugs": ["slug3"]
 }}
 
 Rules:
-- article_slugs at the parent level = articles that belong to this category but not to any child
-- Every article slug must appear exactly once across the entire tree
-- children can be empty [] if no subcategories are needed
+- children can be nested to ANY depth — let the content determine the tree depth
+- article_slugs at a node = articles that belong to this category but not to any child
+- Every article slug must appear EXACTLY ONCE across the entire tree
+- A category with 4+ articles should be split into subcategories
+- Prefer deep narrow trees over flat wide ones — this creates a better browsing experience
 - Output ONLY the JSON array, nothing else"""
 
 

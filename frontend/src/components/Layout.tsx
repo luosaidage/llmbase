@@ -2,9 +2,58 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useState, useEffect, useRef } from 'react';
 import { Icon } from './Icon';
 import { useTheme } from '../lib/theme';
-import { useLang, LANG_OPTIONS, localizeTitle } from '../lib/lang';
+import { useLang, type Lang, LANG_OPTIONS, localizeTitle } from '../lib/lang';
 import { fetchBranding, getBranding, type Branding } from '../lib/branding';
 import { api, type Article, type TaxonomyCategory } from '../lib/api';
+
+/** Recursive sidebar category node — supports arbitrary depth */
+function CategoryNode({ cat, depth, expandedCats, toggleCat, navigate, lang }: {
+  cat: TaxonomyCategory; depth: number;
+  expandedCats: Set<string>; toggleCat: (id: string) => void;
+  navigate: (path: string) => void; lang: Lang;
+}) {
+  const pl = 3.5 + depth * 2.5; // progressive indentation (rem units)
+  const hasChildren = cat.children.length > 0 || cat.articles.length > 0;
+  const isTopLevel = depth === 0;
+
+  return (
+    <div>
+      <div
+        className={`flex items-center gap-2 pr-3.5 py-${isTopLevel ? '2' : '1.5'} text-sm ${
+          isTopLevel ? 'font-medium text-on-surface' : 'text-on-surface-variant hover:text-on-surface'
+        } hover:bg-surface-high rounded cursor-pointer transition-colors`}
+        style={{ paddingLeft: `${pl * 4}px` }}
+        onClick={() => toggleCat(cat.id)}>
+        {hasChildren ? (
+          <Icon name={expandedCats.has(cat.id) ? 'expand_more' : 'chevron_right'}
+            className={`text-[${isTopLevel ? 16 : 14}px] ${isTopLevel ? 'text-primary' : ''}`} />
+        ) : (
+          <span style={{ width: isTopLevel ? 16 : 14 }} />
+        )}
+        <span className="truncate flex-1">{cat.label}</span>
+        <span className={`text-[${isTopLevel ? 11 : 10}px] text-outline`}>{cat.total}</span>
+      </div>
+
+      {expandedCats.has(cat.id) && (
+        <>
+          {cat.children.map(child => (
+            <CategoryNode key={child.id} cat={child} depth={depth + 1}
+              expandedCats={expandedCats} toggleCat={toggleCat}
+              navigate={navigate} lang={lang} />
+          ))}
+          {cat.articles.map(a => (
+            <div key={a.slug}
+              className="pr-3.5 py-1 text-sm text-on-surface-variant hover:text-on-surface hover:bg-surface-high rounded cursor-pointer truncate transition-colors"
+              style={{ paddingLeft: `${(pl + 2.5) * 4}px` }}
+              onClick={() => navigate(`/wiki/${a.slug}`)}>
+              {localizeTitle(a.title, lang)}
+            </div>
+          ))}
+        </>
+      )}
+    </div>
+  );
+}
 
 const NAV = [
   { to: '/', icon: 'dashboard', label: 'Dashboard' },
@@ -93,48 +142,9 @@ export function Layout() {
                 {articles.length} articles
               </div>
               {taxonomy.map(cat => (
-                <div key={cat.id}>
-                  {/* Top-level category */}
-                  <div
-                    className="flex items-center gap-2 px-3.5 py-2 text-sm font-medium text-on-surface hover:bg-surface-high rounded cursor-pointer transition-colors"
-                    onClick={() => toggleCat(cat.id)}>
-                    <Icon name={expandedCats.has(cat.id) ? 'expand_more' : 'chevron_right'} className="text-[16px] text-primary" />
-                    <span className="truncate flex-1">{cat.label}</span>
-                    <span className="text-[11px] text-outline">{cat.total}</span>
-                  </div>
-
-                  {expandedCats.has(cat.id) && (
-                    <>
-                      {/* Sub-categories */}
-                      {cat.children.map(sub => (
-                        <div key={sub.id}>
-                          <div
-                            className="flex items-center gap-2 pl-7 pr-3.5 py-1.5 text-sm text-on-surface-variant hover:text-on-surface hover:bg-surface-high rounded cursor-pointer transition-colors"
-                            onClick={() => toggleCat(sub.id)}>
-                            <Icon name={expandedCats.has(sub.id) ? 'expand_more' : 'chevron_right'} className="text-[14px]" />
-                            <span className="truncate flex-1">{sub.label}</span>
-                            <span className="text-[10px] text-outline">{sub.count}</span>
-                          </div>
-                          {expandedCats.has(sub.id) && sub.articles.map(a => (
-                            <div key={a.slug}
-                              className="pl-12 pr-3.5 py-1 text-sm text-on-surface-variant hover:text-on-surface hover:bg-surface-high rounded cursor-pointer truncate transition-colors"
-                              onClick={() => navigate(`/wiki/${a.slug}`)}>
-                              {localizeTitle(a.title, lang)}
-                            </div>
-                          ))}
-                        </div>
-                      ))}
-                      {/* Direct articles under this category */}
-                      {cat.articles.map(a => (
-                        <div key={a.slug}
-                          className="pl-9 pr-3.5 py-1 text-sm text-on-surface-variant hover:text-on-surface hover:bg-surface-high rounded cursor-pointer truncate transition-colors"
-                          onClick={() => navigate(`/wiki/${a.slug}`)}>
-                          {localizeTitle(a.title, lang)}
-                        </div>
-                      ))}
-                    </>
-                  )}
-                </div>
+                <CategoryNode key={cat.id} cat={cat} depth={0}
+                  expandedCats={expandedCats} toggleCat={toggleCat}
+                  navigate={navigate} lang={lang} />
               ))}
             </>
           )}
