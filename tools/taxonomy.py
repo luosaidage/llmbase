@@ -67,6 +67,12 @@ HIERARCHY = [
                   "commentary", "scholarship", "textual", "philolog"],
         "children": []
     },
+    {
+        "id": "non-target",
+        "label": {"en": "Non-target (Archive)", "zh": "非目标（存档）", "ja": "対象外（アーカイブ）"},
+        "match": ["non-target", "ollama", "gemma", "quantiz", "gguf", "llm-tool", "ai-model"],
+        "children": []
+    },
 ]
 
 
