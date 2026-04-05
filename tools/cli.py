@@ -121,6 +121,33 @@ def ingest_browse_cmd(ctx, url):
         console.print(f"[green]✓[/green] Ingested via browser to: {doc_path}")
 
 
+@ingest.command("wikisource-learn")
+@click.option("--list", "reading_list", type=click.Choice(["confucianism", "daoism", "mohism", "legalism", "military", "history", "poetry", "divination", "zhuzi"]), default=None)
+@click.option("--batch", type=int, default=3, help="Number of works per run")
+@click.pass_context
+def ingest_wikisource_learn_cmd(ctx, reading_list, batch):
+    """Progressive learning from zh.wikisource.org (维基文库)."""
+    from .wikisource import learn
+    console.print(f"[cyan]Learning from Wikisource (list: {reading_list or 'all'})...[/cyan]")
+    with console.status("Fetching from Wikisource..."):
+        results = learn(reading_list, batch, ctx.obj["base_dir"])
+    if results:
+        console.print(f"[green]✓[/green] Ingested {len(results)} works: {', '.join(results)}")
+    else:
+        console.print("[yellow]No new works to ingest.[/yellow]")
+
+
+@ingest.command("wikisource-work")
+@click.argument("title")
+@click.pass_context
+def ingest_wikisource_work_cmd(ctx, title):
+    """Ingest a specific work from Wikisource (e.g. 道德經, 論語)."""
+    from .wikisource import ingest_work
+    with console.status(f"Fetching {title}..."):
+        paths = ingest_work(title, ctx.obj["base_dir"])
+    console.print(f"[green]✓[/green] Ingested {len(paths)} pages from {title}")
+
+
 @ingest.command("cbeta-learn")
 @click.option("--category", type=str, default=None, help="Category: agama, bore, fahua, huayan, chanzong, jingtu, etc.")
 @click.option("--batch", type=int, default=5, help="Number of sutras per run")
