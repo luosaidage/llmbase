@@ -93,9 +93,16 @@ Source document:
 {content[:15000]}
 ---
 
-Existing concepts in the wiki (REUSE these slugs if the concept matches, do NOT create duplicates): {', '.join(existing_concepts) if existing_concepts else 'None yet'}
+EXISTING ARTICLES (you MUST reuse these — DO NOT create new articles for concepts that already exist):
+{chr(10).join('  - ' + c for c in existing_concepts) if existing_concepts else '  (none yet)'}
 
-IMPORTANT: If a concept already exists above, use ===UPDATE=== with the existing slug instead of creating a new ===ARTICLE===.
+CRITICAL DEDUPLICATION RULES:
+- If a concept ALREADY EXISTS above (even under a different name, translation, or variant), you MUST use ===UPDATE=== with the EXISTING slug
+- 四端 and 四端说 are the SAME concept — use UPDATE, not new ARTICLE
+- 仁 and Benevolence are the SAME concept — use UPDATE
+- 阿罗汉 and 阿罗汉位 are the SAME concept — use UPDATE
+- When in doubt, UPDATE an existing article rather than creating a new one
+- New articles should only be created for genuinely NEW concepts not covered above
 
 Please:
 1. Identify the key concepts from this document (1-5 concepts)
@@ -368,49 +375,48 @@ def _parse_update_block(block: str) -> dict | None:
 def _write_article(article: dict, concepts_dir: Path) -> Path | None:
     """Write or update an article file. Merges into existing articles.
 
-    Before creating a new article, checks the alias map to see if this
-    concept already exists under a different slug (e.g., 'mencius' vs
-    'mengzi'). If so, merges into the existing article instead.
+    Three-layer duplicate prevention:
+    1. Exact slug match → merge
+    2. Alias resolution (title, slug, CJK variants) → merge
+    3. CJK substring scan across all articles → merge
     """
+    import re as _re
     from .resolve import build_aliases, resolve_link
 
     slug = article["slug"]
     article_path = concepts_dir / f"{slug}.md"
 
+    # Layer 1: exact slug match
     if article_path.exists():
-        # Article exists — merge new content into it (叠加进化, not 清零)
-        existing = frontmatter.load(str(article_path))
-        new_content = article.get("content", "")
-        if new_content and new_content not in existing.content:
-            existing.content += f"\n\n---\n\n{new_content}"
-            existing.metadata["updated"] = datetime.now(timezone.utc).isoformat()
-            # Merge tags
-            old_tags = set(existing.metadata.get("tags", []))
-            new_tags = set(article.get("tags", []))
-            existing.metadata["tags"] = sorted(old_tags | new_tags)
-            article_path.write_text(frontmatter.dumps(existing), encoding="utf-8")
+        _merge_into(article_path, article)
         return article_path
 
-    # Before creating new: check if an alias points to an existing article
+    # Layer 2: alias resolution
     aliases = build_aliases(concepts_dir)
     title = article.get("title", slug)
-    # Try resolving by slug, title, and title parts
-    for candidate in [slug, title] + [p.strip() for p in title.split("/") if p.strip()]:
+    candidates = [slug, title] + [p.strip() for p in title.split("/") if p.strip()]
+    for candidate in candidates:
         resolved = resolve_link(candidate, aliases)
         if resolved and resolved != slug:
             existing_path = concepts_dir / f"{resolved}.md"
             if existing_path.exists():
-                # Merge into existing article under the resolved slug
-                existing = frontmatter.load(str(existing_path))
-                new_content = article.get("content", "")
-                if new_content and new_content not in existing.content:
-                    existing.content += f"\n\n---\n\n{new_content}"
-                    existing.metadata["updated"] = datetime.now(timezone.utc).isoformat()
-                    old_tags = set(existing.metadata.get("tags", []))
-                    new_tags = set(article.get("tags", []))
-                    existing.metadata["tags"] = sorted(old_tags | new_tags)
-                    existing_path.write_text(frontmatter.dumps(existing), encoding="utf-8")
+                _merge_into(existing_path, article)
                 return existing_path
+
+    # Layer 3: CJK substring scan — catches 四端说 matching 四端
+    new_cjk = _re.sub(r'[^\u4e00-\u9fff\u3400-\u4dbf]', '', title)
+    if new_cjk and len(new_cjk) >= 2:
+        for md_file in concepts_dir.glob("*.md"):
+            existing_post = frontmatter.load(str(md_file))
+            existing_title = existing_post.metadata.get("title", "")
+            existing_cjk = _re.sub(r'[^\u4e00-\u9fff\u3400-\u4dbf]', '', existing_title)
+            if not existing_cjk:
+                continue
+            # Check substring relationship with length ratio >= 67%
+            short, long = (new_cjk, existing_cjk) if len(new_cjk) <= len(existing_cjk) else (existing_cjk, new_cjk)
+            if short in long and len(short) / len(long) >= 0.6:
+                _merge_into(md_file, article)
+                return md_file
 
     # Truly new article
     post = frontmatter.Post(article.get("content", ""))
@@ -421,6 +427,19 @@ def _write_article(article: dict, concepts_dir: Path) -> Path | None:
     post.metadata["updated"] = datetime.now(timezone.utc).isoformat()
     article_path.write_text(frontmatter.dumps(post), encoding="utf-8")
     return article_path
+
+
+def _merge_into(existing_path: Path, article: dict):
+    """Merge new article content into an existing article (叠加进化)."""
+    existing = frontmatter.load(str(existing_path))
+    new_content = article.get("content", "")
+    if new_content and new_content not in existing.content:
+        existing.content += f"\n\n---\n\n{new_content}"
+        existing.metadata["updated"] = datetime.now(timezone.utc).isoformat()
+        old_tags = set(existing.metadata.get("tags", []))
+        new_tags = set(article.get("tags", []))
+        existing.metadata["tags"] = sorted(old_tags | new_tags)
+        existing_path.write_text(frontmatter.dumps(existing), encoding="utf-8")
 
     return None
 
