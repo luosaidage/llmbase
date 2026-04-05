@@ -537,12 +537,71 @@ def merge_duplicates(base_dir: Path | None = None, max_merges: int = 15) -> list
         secondary_path.unlink()
         fixes.append(f"Merged {secondary_slug} → {primary_slug}")
 
-    # Rebuild index if any merges happened
+    # Rebuild index + update taxonomy if any merges happened
     if fixes:
         from .compile import rebuild_index
         rebuild_index(base_dir)
+        _refresh_taxonomy_after_merge(base_dir)
 
     return fixes
+
+
+def _refresh_taxonomy_after_merge(base_dir: Path | None = None):
+    """Update taxonomy.json to reflect merged articles.
+
+    Removes deleted slugs and adds any new slugs not yet in the tree.
+    Preserves the locked flag and category structure.
+    """
+    import json
+    cfg = load_config(base_dir)
+    meta_dir = Path(cfg["paths"]["meta"])
+    concepts_dir = Path(cfg["paths"]["concepts"])
+    tax_path = meta_dir / "taxonomy.json"
+
+    if not tax_path.exists():
+        return
+
+    taxonomy = json.loads(tax_path.read_text())
+    existing_slugs = {f.stem for f in concepts_dir.glob("*.md")}
+
+    # Collect all slugs currently in taxonomy
+    def _collect_slugs(nodes):
+        all_s = set()
+        for n in nodes:
+            all_s.update(n.get("article_slugs", []))
+            all_s.update(_collect_slugs(n.get("children", [])))
+        return all_s
+
+    def _remove_dead_slugs(nodes):
+        for n in nodes:
+            n["article_slugs"] = [s for s in n.get("article_slugs", []) if s in existing_slugs]
+            _remove_dead_slugs(n.get("children", []))
+
+    categories = taxonomy.get("categories", [])
+    _remove_dead_slugs(categories)
+
+    # Find slugs not in any category
+    assigned = _collect_slugs(categories)
+    unassigned = existing_slugs - assigned
+    if unassigned:
+        # Add to "Other" category
+        other = None
+        for c in categories:
+            if c.get("id") in ("other", "其他"):
+                other = c
+                break
+        if other:
+            other["article_slugs"] = list(set(other.get("article_slugs", [])) | unassigned)
+        else:
+            categories.append({
+                "id": "other",
+                "label": {"en": "Other", "zh": "其他", "ja": "その他"},
+                "article_slugs": list(unassigned),
+                "children": [],
+            })
+
+    taxonomy["categories"] = categories
+    tax_path.write_text(json.dumps(taxonomy, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 def _rewrite_links(concepts_dir: Path, old_slug: str, new_slug: str):
