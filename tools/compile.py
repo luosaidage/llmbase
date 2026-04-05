@@ -433,11 +433,44 @@ def _write_article(article: dict, concepts_dir: Path) -> Path | None:
 
 
 def _merge_into(existing_path: Path, article: dict):
-    """Merge new article content into an existing article (叠加进化)."""
+    """Merge new article content into an existing article (叠加进化).
+
+    Section-level dedup: splits by ## English / ## 中文 / ## 日本語,
+    keeps the longer version of each section. Never blindly appends
+    entire content blocks — prevents 6× duplicate sections.
+    """
+    import re
+
     existing = frontmatter.load(str(existing_path))
     new_content = article.get("content", "")
-    if new_content and new_content not in existing.content:
-        existing.content += f"\n\n---\n\n{new_content}"
+    if not new_content or not new_content.strip():
+        return None
+
+    # Split both into language sections
+    existing_sections = _split_sections(existing.content)
+    new_sections = _split_sections(new_content)
+
+    changed = False
+    for lang_key in ("english", "中文", "日本語"):
+        new_sec = new_sections.get(lang_key, "").strip()
+        old_sec = existing_sections.get(lang_key, "").strip()
+
+        if not new_sec:
+            continue
+
+        if not old_sec:
+            # Add missing language section
+            existing_sections[lang_key] = new_sec
+            changed = True
+        elif len(new_sec) > len(old_sec) * 1.2:
+            # New version is significantly longer — replace
+            existing_sections[lang_key] = new_sec
+            changed = True
+        # Otherwise keep existing (avoid duplication)
+
+    if changed:
+        # Reassemble content from sections
+        existing.content = _assemble_sections(existing_sections)
         existing.metadata["updated"] = datetime.now(timezone.utc).isoformat()
         old_tags = set(existing.metadata.get("tags", []))
         new_tags = set(article.get("tags", []))
@@ -445,6 +478,49 @@ def _merge_into(existing_path: Path, article: dict):
         existing_path.write_text(frontmatter.dumps(existing), encoding="utf-8")
 
     return None
+
+
+def _split_sections(content: str) -> dict[str, str]:
+    """Split trilingual article into {lang: content} dict."""
+    import re
+    sections = {"_preamble": ""}
+    current = "_preamble"
+
+    for line in content.split("\n"):
+        if re.match(r"^## English\s*$", line, re.IGNORECASE):
+            current = "english"
+            sections.setdefault(current, "")
+            continue
+        elif re.match(r"^## 中文\s*$", line):
+            current = "中文"
+            sections.setdefault(current, "")
+            continue
+        elif re.match(r"^## 日本語\s*$", line):
+            current = "日本語"
+            sections.setdefault(current, "")
+            continue
+        elif re.match(r"^---$", line) and current != "_preamble":
+            # Section separator from previous merges — skip
+            continue
+
+        sections[current] = sections.get(current, "") + line + "\n"
+
+    return sections
+
+
+def _assemble_sections(sections: dict[str, str]) -> str:
+    """Reassemble sections into a single content string."""
+    parts = []
+    preamble = sections.get("_preamble", "").strip()
+    if preamble:
+        parts.append(preamble)
+
+    for lang, header in [("english", "## English"), ("中文", "## 中文"), ("日本語", "## 日本語")]:
+        sec = sections.get(lang, "").strip()
+        if sec:
+            parts.append(f"{header}\n\n{sec}")
+
+    return "\n\n".join(parts)
 
 
 def _build_backlinks(concepts_dir: Path, meta_dir: Path):
