@@ -353,6 +353,24 @@ def create_web_app(base_dir: Path | None = None):
             results = lint(base)
             return jsonify({"results": results})
 
+    @app.route("/api/lint/fix", methods=["POST"])
+    def api_lint_fix():
+        """Run the full auto-fix pipeline: clean → metadata → broken links → dedup → taxonomy."""
+        from .lint import auto_fix
+        fixes = auto_fix(base)
+        return jsonify({"fixes": fixes, "fix_count": len(fixes)})
+
+    @app.route("/api/health")
+    def api_health():
+        """Return the last persisted health report."""
+        cfg = load_config(base)
+        meta_dir = Path(cfg["paths"]["meta"])
+        health_path = meta_dir / "health.json"
+        if not health_path.exists():
+            return jsonify({"report": None})
+        report = json.loads(health_path.read_text())
+        return jsonify({"report": report})
+
     @app.route("/api/wiki/export")
     def api_wiki_export():
         """Export all wiki articles as JSON (for backup/sync)."""
