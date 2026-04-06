@@ -1,6 +1,6 @@
 # API Reference
 
-All endpoints are served by the web server (`llmbase web`). Read endpoints are always open; write endpoints require auth in cloud deployments.
+All endpoints are served by the web server (`llmbase web`). Read endpoints are generally open; write endpoints and sensitive data (trails, health fixes) require auth in cloud deployments.
 
 ## Authentication
 

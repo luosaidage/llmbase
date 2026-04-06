@@ -47,7 +47,7 @@ raw/  ──LLM compile──>  wiki/  ──query/lint──>  wiki/ (enhanced)
 | **Guided Reading** | LLM-generated 导读 (literary introduction) that evolves with your knowledge base |
 | **Voice/Tone Modes** | Query in different styles: 文言文 📜 (default for Chinese), scholar 🎓, caveman 🦴, ELI5 👶 |
 | **Emergent Taxonomy** | LLM generates domain-appropriate categories — no hardcoded domains. Works for any field |
-| **Alias Resolution** | Multilingual wiki-links resolve correctly: `[[参禅]]` → `can-chan.md` with simplified/traditional auto-conversion |
+| **Alias Resolution** | Multilingual wiki-links resolve correctly: `[[参禅]]` → `can-chan.md`, with optional simplified/traditional conversion (opencc) |
 | **Duplicate Detection** | CJK-aware dedup: merges `benevolence` + `ren` + `仁爱` into one article (叠加进化) |
 | **Reference Sources** | Pluggable citation system: articles show verifiable links to CBETA, Wikisource, ctext.org. [Guide →](docs/reference-sources.md) |
 | **Research Trails** | Rabbithole-style exploration paths — auto-generated from deep research queries |

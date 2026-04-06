@@ -5,7 +5,7 @@ LLMBase can learn on its own. Deploy it, configure a data source, and the worker
 ## How It Works
 
 ```
-Worker Loop (runs alongside web server):
+Worker Loop (runs when started via wsgi.py or `llmbase serve`):
   every 6h  → learn: ingest batch from data source
   every 1h  → compile: process new raw docs into wiki
   every 12h → taxonomy: regenerate categories + guided reading

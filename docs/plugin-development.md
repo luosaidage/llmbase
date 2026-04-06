@@ -55,7 +55,7 @@ Article page → "Sources" section with [arxiv] badge + link
 ### API
 
 ```
-GET /api/refs/plugins → [{"id": "cbeta", "name": {"en": "...", "zh": "..."}}]
+GET /api/refs/plugins → {"plugins": [{"id": "cbeta", "name": {"en": "...", "zh": "..."}}]}
 ```
 
 ## Data Source Plugins

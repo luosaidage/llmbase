@@ -105,4 +105,6 @@ Central to link resolution. `wiki/_meta/aliases.json` maps every known name to i
 }
 ```
 
-Sources: article slug, title parts (split by `/`), simplified/traditional variants via OpenCC, merged_from history.
+Sources: article slug, title parts (split by `/`), simplified/traditional variants via OpenCC (if installed), merged_from history.
+
+> **Note**: Simplified/traditional auto-conversion requires `opencc-python-reimplemented`. Install with `pip install opencc-python-reimplemented`. Without it, alias resolution still works but only matches exact text.
