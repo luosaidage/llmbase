@@ -242,6 +242,104 @@ def _dedup_tree(nodes: list[dict], seen: set | None = None):
         node["article_slugs"] = unique
 
 
+def assign_new_articles(base_dir: Path | None = None):
+    """Assign newly compiled articles to existing taxonomy categories.
+
+    Runs after compile — no LLM needed, uses tag matching.
+    New articles get added to the category whose existing articles
+    share the most tags. Respects locked taxonomy (only adds, never restructures).
+    """
+    cfg = load_config(base_dir)
+    meta_dir = Path(cfg["paths"]["meta"])
+    concepts_dir = Path(cfg["paths"]["concepts"])
+    tax_path = meta_dir / "taxonomy.json"
+
+    if not tax_path.exists():
+        return
+
+    taxonomy = json.loads(tax_path.read_text())
+    categories = taxonomy.get("categories", [])
+    if not categories:
+        return
+
+    # Collect all slugs already in taxonomy
+    assigned = set()
+    def _collect(nodes):
+        for n in nodes:
+            assigned.update(n.get("article_slugs", []))
+            _collect(n.get("children", []))
+    _collect(categories)
+
+    # Find unassigned articles
+    all_slugs = {f.stem for f in concepts_dir.glob("*.md")}
+    unassigned = all_slugs - assigned
+    if not unassigned:
+        return
+
+    # Build tag profile for each category (from its existing articles)
+    cat_profiles = {}  # category_id → set of tags
+    def _build_profiles(nodes):
+        for n in nodes:
+            cat_id = n.get("id", "")
+            tags = set()
+            for slug in n.get("article_slugs", []):
+                article_path = concepts_dir / f"{slug}.md"
+                if article_path.exists():
+                    post = frontmatter.load(str(article_path))
+                    tags.update(t.lower() for t in post.metadata.get("tags", []))
+            cat_profiles[cat_id] = (tags, n)
+            _build_profiles(n.get("children", []))
+    _build_profiles(categories)
+
+    # Assign each new article to best-matching category
+    for slug in unassigned:
+        article_path = concepts_dir / f"{slug}.md"
+        if not article_path.exists():
+            continue
+        post = frontmatter.load(str(article_path))
+        article_tags = set(t.lower() for t in post.metadata.get("tags", []))
+
+        if not article_tags:
+            # No tags — put in "Other"
+            _add_to_other(categories, slug)
+            continue
+
+        # Score each category by tag overlap
+        best_cat = None
+        best_score = 0
+        for cat_id, (cat_tags, node) in cat_profiles.items():
+            if not cat_tags:
+                continue
+            overlap = len(article_tags & cat_tags)
+            if overlap > best_score:
+                best_score = overlap
+                best_cat = node
+
+        if best_cat and best_score > 0:
+            best_cat.setdefault("article_slugs", []).append(slug)
+        else:
+            _add_to_other(categories, slug)
+
+    # Save updated taxonomy (preserve locked flag)
+    taxonomy["categories"] = categories
+    tax_path.write_text(json.dumps(taxonomy, indent=2, ensure_ascii=False), encoding="utf-8")
+    logger.info(f"[taxonomy] Assigned {len(unassigned)} new articles to categories")
+
+
+def _add_to_other(categories: list, slug: str):
+    """Add slug to the 'other' category, creating it if needed."""
+    for c in categories:
+        if c.get("id") in ("other", "其他"):
+            c.setdefault("article_slugs", []).append(slug)
+            return
+    categories.append({
+        "id": "other",
+        "label": {"en": "Other", "zh": "其他", "ja": "その他"},
+        "article_slugs": [slug],
+        "children": [],
+    })
+
+
 def load_taxonomy(base_dir: Path | None = None) -> dict:
     """Load cached taxonomy (raw, not localized)."""
     cfg = load_config(base_dir)

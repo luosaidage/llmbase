@@ -160,6 +160,14 @@ Focus on extracting knowledge, not just summarizing. Each language section shoul
     # Rebuild index
     rebuild_index(base_dir)
 
+    # Assign new articles to taxonomy categories (no LLM, tag-based)
+    if compiled_articles:
+        try:
+            from .taxonomy import assign_new_articles
+            assign_new_articles(base_dir)
+        except Exception:
+            pass  # Non-critical
+
     return compiled_articles
 
 
