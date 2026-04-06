@@ -89,6 +89,34 @@ export function ArticleDetail() {
 
         {/* Content */}
         <Markdown content={displayContent} />
+
+        {/* Sources / References */}
+        {article.sources && article.sources.length > 0 && (
+          <div className="mt-10 pt-6 border-t border-outline-variant/30">
+            <h3 className="text-xs uppercase tracking-widest text-on-surface-variant mb-3 flex items-center gap-2">
+              <Icon name="menu_book" className="text-[14px]" />
+              {lang === 'zh' || lang === 'zh-en' ? '引用来源' : 'Sources'}
+            </h3>
+            <div className="space-y-2">
+              {article.sources.map((src: { plugin?: string; url?: string; title?: string; work_id?: string }, i: number) => (
+                <div key={i} className="flex items-start gap-2 text-sm">
+                  <span className="px-1.5 py-0.5 text-[10px] bg-primary/10 text-primary rounded font-mono flex-shrink-0">
+                    {src.plugin || 'ref'}
+                  </span>
+                  {src.url ? (
+                    <a href={src.url} target="_blank" rel="noopener noreferrer"
+                      className="text-on-surface-variant hover:text-primary transition-colors truncate">
+                      {src.title || src.url}
+                      {src.work_id && <span className="text-outline ml-1">({src.work_id})</span>}
+                    </a>
+                  ) : (
+                    <span className="text-on-surface-variant">{src.title || 'Unknown source'}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Right sidebar */}

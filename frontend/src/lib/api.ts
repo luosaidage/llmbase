@@ -6,6 +6,7 @@ export interface Article {
   summary: string;
   tags: string[];
   content?: string;
+  sources?: { plugin?: string; url?: string; title?: string; work_id?: string }[];
 }
 
 export interface SearchResult {

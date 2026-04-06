@@ -137,9 +137,21 @@ Focus on extracting knowledge, not just summarizing. Each language section shoul
 
         response = chat(prompt, system=SYSTEM_PROMPT, max_tokens=cfg["llm"]["max_tokens"])
 
-        # Parse response and write articles
+        # Build source reference from raw doc metadata
+        source_ref = {
+            "plugin": post.metadata.get("type", "unknown"),
+            "url": post.metadata.get("source", ""),
+            "title": title,
+        }
+        # Add plugin-specific fields
+        for key in ("work_id", "canon", "work", "chapter", "book"):
+            if key in post.metadata:
+                source_ref[key] = post.metadata[key]
+
+        # Parse response and write articles (with source ref)
         articles = _parse_compile_response(response)
         for article in articles:
+            article["sources"] = [source_ref]
             article_path = _write_article(article, concepts_dir)
             if article_path:
                 compiled_articles.append(str(article_path))
@@ -434,6 +446,7 @@ def _write_article(article: dict, concepts_dir: Path) -> Path | None:
     post.metadata["title"] = article.get("title", slug)
     post.metadata["summary"] = article.get("summary", "")
     post.metadata["tags"] = article.get("tags", [])
+    post.metadata["sources"] = article.get("sources", [])
     post.metadata["created"] = datetime.now(timezone.utc).isoformat()
     post.metadata["updated"] = datetime.now(timezone.utc).isoformat()
     article_path.write_text(frontmatter.dumps(post), encoding="utf-8")
@@ -475,6 +488,18 @@ def _merge_into(existing_path: Path, article: dict):
             existing_sections[lang_key] = new_sec
             changed = True
         # Otherwise keep existing (avoid duplication)
+
+    # Merge sources (deduplicate by URL)
+    new_sources = article.get("sources", [])
+    if new_sources:
+        existing_sources = existing.metadata.get("sources", [])
+        existing_urls = {s.get("url", "") for s in existing_sources}
+        for src in new_sources:
+            if src.get("url") and src["url"] not in existing_urls:
+                existing_sources.append(src)
+                existing_urls.add(src["url"])
+        existing.metadata["sources"] = existing_sources
+        changed = True
 
     if changed:
         # Reassemble content from sections

@@ -174,6 +174,12 @@ def create_web_app(base_dir: Path | None = None):
         aliases = load_aliases(Path(cfg["paths"]["meta"]))
         return jsonify({"aliases": aliases})
 
+    @app.route("/api/refs/plugins")
+    def api_ref_plugins():
+        """List available reference source plugins."""
+        from .refs import list_plugins
+        return jsonify({"plugins": list_plugins()})
+
     @app.route("/api/xici")
     def api_xici():
         """Get the cached Xi Ci (guided introduction). ?lang=zh|en|ja|zh-en"""
