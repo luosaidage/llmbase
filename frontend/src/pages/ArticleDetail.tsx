@@ -5,6 +5,7 @@ import { Markdown } from '../components/Markdown';
 import { Loading } from '../components/Loading';
 import { Icon } from '../components/Icon';
 import { useLang, localizeTitle, extractLangContent } from '../lib/lang';
+import { useTrail } from '../lib/trail';
 import { api, type Article } from '../lib/api';
 
 export function ArticleDetail() {
@@ -14,6 +15,14 @@ export function ArticleDetail() {
   const [allArticles, setAllArticles] = useState<Article[]>([]);
   const [loading, setLoading] = useState(true);
   const { lang } = useLang();
+  const { recordStep } = useTrail();
+
+  // Auto-record article visit to trail
+  useEffect(() => {
+    if (article && slug) {
+      recordStep({ type: 'article', slug, title: article.title });
+    }
+  }, [slug, article?.title]);
 
   useEffect(() => {
     if (!slug) return;
@@ -140,6 +149,27 @@ export function ArticleDetail() {
           </div>
         )}
 
+        {/* Backlinks — "Cited by" */}
+        {article.backlinks && article.backlinks.length > 0 && (
+          <div className="mb-8">
+            <h4 className="text-xs uppercase tracking-widest text-on-surface-variant mb-3 flex items-center gap-1.5">
+              <Icon name="link" className="text-[12px]" />
+              {lang === 'zh' || lang === 'zh-en' ? '被引用' : 'Cited by'} ({article.backlinks.length})
+            </h4>
+            <div className="space-y-1.5">
+              {article.backlinks.map(bl => (
+                <div
+                  key={bl.slug}
+                  className="text-sm text-on-surface-variant hover:text-primary cursor-pointer transition-colors truncate"
+                  onClick={() => navigate(`/wiki/${bl.slug}`)}
+                >
+                  {localizeTitle(bl.title, lang)}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Related */}
         {related.length > 0 && (
           <div className="mb-8">
@@ -151,7 +181,7 @@ export function ArticleDetail() {
                   className="text-sm text-on-surface-variant hover:text-primary cursor-pointer transition-colors truncate"
                   onClick={() => navigate(`/wiki/${a.slug}`)}
                 >
-                  {a.title}
+                  {localizeTitle(a.title, lang)}
                 </div>
               ))}
             </div>

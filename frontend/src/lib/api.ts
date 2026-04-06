@@ -7,6 +7,7 @@ export interface Article {
   tags: string[];
   content?: string;
   sources?: { plugin?: string; url?: string; title?: string; work_id?: string }[];
+  backlinks?: { slug: string; title: string }[];
 }
 
 export interface SearchResult {
@@ -41,6 +42,22 @@ export interface RawDoc {
   type: string;
   compiled: boolean;
   ingested_at: string;
+}
+
+export interface TrailStep {
+  type: 'article' | 'query' | 'search';
+  slug?: string;
+  title?: string;
+  question?: string;
+  ts: string;
+}
+
+export interface Trail {
+  id: string;
+  name: string;
+  created: string;
+  updated: string;
+  steps: TrailStep[];
 }
 
 export interface LintResults {
@@ -93,6 +110,10 @@ export const api = {
   ask: (question: string, deep = false, fileBack = true, tone = 'default') => post<{ answer: string }>('/api/ask', { question, deep, file_back: fileBack, tone }),
   getTones: () => get<{ tones: { id: string; label: string; label_zh: string; icon: string }[] }>('/api/tones').then(d => d.tones),
   getAliases: () => get<{ aliases: Record<string, string> }>('/api/aliases').then(d => d.aliases),
+  getTrails: () => get<{ trails: Trail[] }>('/api/trails').then(d => d.trails),
+  saveTrailStep: (trailId: string | null, step: TrailStep, name?: string) =>
+    post<{ trail: Trail }>('/api/trails', { trail_id: trailId, step, name }),
+  deleteTrail: (id: string) => post<{ status: string }>(`/api/trails/${id}/delete`, {}),
   getEntities: () => get<{ people: any[]; events: any[]; places: any[]; article_count?: number }>('/api/entities'),
   extractEntities: () => post<{ people: any[]; events: any[]; places: any[] }>('/api/entities/extract', {}),
   getXiCi: (lang: string) => get<XiCi>(`/api/xici?lang=${lang}`),
