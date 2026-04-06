@@ -28,6 +28,7 @@ export function Graph() {
   const [hovered, setHovered] = useState<Node | null>(null);
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [linkThreshold, setLinkThreshold] = useState(2); // Min shared tags to show a link
+  const [visibleCount, setVisibleCount] = useState<number | null>(null);
 
   useEffect(() => {
     api.getArticles().then(a => { setArticles(a); setLoading(false); }).catch(() => setLoading(false));
@@ -46,6 +47,7 @@ export function Graph() {
   useEffect(() => {
     if (!svgRef.current || articles.length === 0) return;
 
+    setHovered(null); // Clear stale hover on rebuild
     const svg = d3.select(svgRef.current);
     svg.selectAll('*').remove();
 
@@ -57,19 +59,31 @@ export function Graph() {
       ? articles.filter(a => a.tags?.includes(selectedTag))
       : articles;
 
-    // Build links: weight = number of shared tags (only show if >= threshold)
+    // Build links via inverted index (O(T * avg_articles_per_tag) instead of O(n²))
     const links: Link[] = [];
-    const tagSets = filtered.map(a => new Set(a.tags?.filter(t => !t.startsWith('category:')) || []));
-
-    for (let i = 0; i < filtered.length; i++) {
-      for (let j = i + 1; j < filtered.length; j++) {
-        let shared = 0;
-        for (const t of tagSets[i]) {
-          if (tagSets[j].has(t)) shared++;
+    const tagToSlugs: Record<string, string[]> = {};
+    for (const a of filtered) {
+      for (const t of a.tags || []) {
+        if (!t.startsWith('category:')) {
+          (tagToSlugs[t] ??= []).push(a.slug);
         }
-        if (shared >= linkThreshold) {
-          links.push({ source: filtered[i].slug, target: filtered[j].slug, weight: shared });
+      }
+    }
+    // Count shared tags per pair
+    const pairWeights: Record<string, number> = {};
+    for (const slugs of Object.values(tagToSlugs)) {
+      if (slugs.length > 100) continue; // Skip overly generic tags
+      for (let i = 0; i < slugs.length; i++) {
+        for (let j = i + 1; j < slugs.length; j++) {
+          const key = slugs[i] < slugs[j] ? `${slugs[i]}|${slugs[j]}` : `${slugs[j]}|${slugs[i]}`;
+          pairWeights[key] = (pairWeights[key] || 0) + 1;
         }
+      }
+    }
+    for (const [key, weight] of Object.entries(pairWeights)) {
+      if (weight >= linkThreshold) {
+        const [a, b] = key.split('|');
+        links.push({ source: a, target: b, weight });
       }
     }
 
@@ -109,6 +123,7 @@ export function Graph() {
     const visibleNodes = filtered.length > 100
       ? nodes.filter(n => connectedIds.has(n.id))
       : nodes;
+    setVisibleCount(visibleNodes.length);
 
     const g = svg.append('g');
 
@@ -270,7 +285,7 @@ export function Graph() {
         </div>
 
         <span className="text-xs text-outline">
-          {articles.length} {zh ? '篇' : 'nodes'}
+          {visibleCount ?? articles.length} {zh ? '篇' : 'nodes'}
         </span>
 
         <label className="flex items-center gap-1.5 text-xs text-on-surface-variant cursor-pointer">
