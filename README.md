@@ -6,6 +6,7 @@
 
 [![GitHub stars](https://img.shields.io/github/stars/Hosuke/llmbase?style=social)](https://github.com/Hosuke/llmbase)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
+[![PyPI](https://img.shields.io/pypi/v/llmwiki.svg)](https://pypi.org/project/llmwiki/)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org)
 [![MCP Compatible](https://img.shields.io/badge/MCP-Compatible-purple.svg)](https://modelcontextprotocol.io/)
 [![Deploy on Railway](https://img.shields.io/badge/Deploy-Railway-blueviolet.svg)](https://railway.app)
@@ -69,7 +70,8 @@ raw/  ──LLM compile──>  wiki/  ──query/lint──>  wiki/ (enhanced)
 git clone https://github.com/Hosuke/llmbase.git && cd llmbase
 
 # Backend
-pip install -e .
+pip install llmwiki          # from PyPI
+# or: pip install -e .       # from source
 
 # Frontend
 cd frontend && npm install && npx vite build && cd ..

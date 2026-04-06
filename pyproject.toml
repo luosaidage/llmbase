@@ -3,7 +3,7 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "llmbase"
+name = "llmwiki"
 version = "0.1.0"
 description = "LLM-powered personal knowledge base — raw data goes in, an LLM compiles it into a structured, interlinked wiki"
 readme = "README.md"
