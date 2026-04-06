@@ -163,12 +163,14 @@ def _generate_single_pass(articles: list[dict], cfg: dict) -> list[dict] | None:
 def _generate_two_phase(articles: list[dict], cfg: dict) -> list[dict] | None:
     """Large KB (100+ articles): two-phase taxonomy to avoid token overflow.
 
-    Phase 1: LLM sees ONLY tag frequencies + sample titles → generates category structure
-    Phase 2: Articles assigned to categories by tag/title matching (no LLM needed)
+    Phase 1: LLM sees ALL tags (not just top 40) + article title samples
+             → generates category structure with match_tags
+    Phase 2: Articles assigned by title-based LLM classification in batches
+             (not just tag matching, which is too coarse)
     """
     from collections import Counter
 
-    # Phase 1: Build a compact summary for the LLM
+    # Phase 1: Build comprehensive tag summary
     tag_counter = Counter()
     title_samples: dict[str, list[str]] = {}
     for a in articles:
@@ -178,34 +180,53 @@ def _generate_two_phase(articles: list[dict], cfg: dict) -> list[dict] | None:
                 continue
             tag_counter[t_lower] += 1
             title_samples.setdefault(t_lower, [])
-            if len(title_samples[t_lower]) < 3:
+            if len(title_samples[t_lower]) < 2:
                 title_samples[t_lower].append(a["title"])
 
-    # Top 40 tags with sample titles
+    # ALL tags with 2+ occurrences (not just top 40)
     tag_summary = []
-    for tag, count in tag_counter.most_common(40):
-        samples = title_samples.get(tag, [])[:3]
+    for tag, count in tag_counter.most_common():
+        if count < 2 and len(tag_summary) >= 60:
+            break  # Stop after 60 tags or when freq drops to 1
+        samples = title_samples.get(tag, [])[:2]
         sample_str = "; ".join(samples)
-        tag_summary.append(f"- {tag} ({count} articles): {sample_str}")
+        tag_summary.append(f"- {tag} ({count}): {sample_str}")
     tag_text = "\n".join(tag_summary)
 
-    phase1_prompt = f"""This knowledge base has {len(articles)} articles. Here are the most common tags and sample titles:
+    # Also show a sample of article titles to give LLM better domain understanding
+    import random
+    sample_titles = random.sample(
+        [a["title"] for a in articles],
+        min(30, len(articles))
+    )
+    titles_text = "\n".join(f"  {t}" for t in sample_titles)
 
+    phase1_prompt = f"""This knowledge base has {len(articles)} articles. Here are the tags and sample titles:
+
+Tags (with article counts):
 {tag_text}
 
-Based on these tags and topics, create a DEEP hierarchical taxonomy (category tree).
-Do NOT assign article slugs — just create the category structure with IDs and trilingual labels.
+Sample article titles:
+{titles_text}
 
-Produce a JSON array where each category has:
+Create a DEEP hierarchical taxonomy. CRITICAL RULES:
+- Each DISTINCT school of thought, tradition, or topic MUST be its own top-level category
+  (e.g., Confucianism, Buddhism, Daoism, Mohism, Legalism should be SEPARATE categories)
+- Do NOT lump different traditions together — an article about Mozi belongs in Mohism, not Confucianism
+- Create subcategories within each top-level category
+- Include a catch-all category for articles that don't fit elsewhere
+
+Produce a JSON array:
 {{
   "id": "kebab-case-id",
   "label": {{"en": "English Name", "zh": "中文名", "ja": "日本語名"}},
   "match_tags": ["tag1", "tag2"],
+  "match_title_keywords": ["keyword1", "keyword2"],
   "children": [...]
 }}
 
-match_tags = which tags should map to this category.
-Children inherit parent match_tags. A tag should appear in only ONE category's match_tags.
+match_tags = tags that should map to this category.
+match_title_keywords = keywords in article TITLES that indicate this category.
 Output ONLY the JSON array."""
 
     logger.info(f"[taxonomy] Phase 1: generating category structure from {len(tag_counter)} tags...")
@@ -223,38 +244,60 @@ Output ONLY the JSON array."""
 
 
 def _assign_articles_to_tree(tree: list[dict], articles: list[dict]):
-    """Assign articles to categories based on match_tags (no LLM needed).
+    """Assign articles to categories using tags + title keywords.
 
-    Each article goes to the most specific (deepest) matching category.
+    Matching priority: title keyword (strongest) > specific tag > generic tag.
     """
-    # Build flat mapping: tag → (node, depth)
-    tag_to_node: dict[str, tuple[dict, int]] = {}
+    import re
 
-    def _index_tags(nodes, depth=0):
+    # Build flat mappings
+    tag_to_node: dict[str, tuple[dict, int]] = {}
+    keyword_to_node: dict[str, tuple[dict, int]] = {}
+
+    def _index(nodes, depth=0):
         for node in nodes:
             for tag in node.get("match_tags", []):
-                tag_lower = tag.lower()
-                # Deeper node wins (more specific)
-                if tag_lower not in tag_to_node or depth > tag_to_node[tag_lower][1]:
-                    tag_to_node[tag_lower] = (node, depth)
-            _index_tags(node.get("children", []), depth + 1)
+                t = tag.lower()
+                if t not in tag_to_node or depth > tag_to_node[t][1]:
+                    tag_to_node[t] = (node, depth)
+            for kw in node.get("match_title_keywords", []):
+                k = kw.lower()
+                if k not in keyword_to_node or depth > keyword_to_node[k][1]:
+                    keyword_to_node[k] = (node, depth)
+            _index(node.get("children", []), depth + 1)
 
-    _index_tags(tree)
+    _index(tree)
 
-    # Assign each article to its best-matching category
     assigned = set()
     for a in articles:
         best_node = None
         best_depth = -1
-        for tag in a.get("tags", []):
-            t_lower = tag.lower()
-            if t_lower.startswith("category:"):
-                continue
-            if t_lower in tag_to_node:
-                node, depth = tag_to_node[t_lower]
-                if depth > best_depth:
+        best_score = 0  # keyword match scores higher than tag match
+
+        title_lower = a.get("title", "").lower()
+
+        # Title keyword matching (strongest signal)
+        for kw, (node, depth) in keyword_to_node.items():
+            if kw in title_lower:
+                score = 100 + depth  # Keyword match always wins over tag
+                if score > best_score:
                     best_node = node
                     best_depth = depth
+                    best_score = score
+
+        # Tag matching (fallback)
+        if best_score < 100:
+            for tag in a.get("tags", []):
+                t = tag.lower()
+                if t.startswith("category:"):
+                    continue
+                if t in tag_to_node:
+                    node, depth = tag_to_node[t]
+                    score = depth
+                    if score > best_score:
+                        best_node = node
+                        best_depth = depth
+                        best_score = score
 
         if best_node is not None:
             best_node.setdefault("article_slugs", []).append(a["slug"])
@@ -274,6 +317,7 @@ def _assign_articles_to_tree(tree: list[dict], articles: list[dict]):
     def _clean(nodes):
         for n in nodes:
             n.pop("match_tags", None)
+            n.pop("match_title_keywords", None)
             n.setdefault("article_slugs", [])
             _clean(n.get("children", []))
 
