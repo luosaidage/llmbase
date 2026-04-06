@@ -422,6 +422,26 @@ def lint_fix_cmd(ctx):
         console.print("[green]Nothing to fix.[/green]")
 
 
+@lint.command("normalize-tags")
+@click.pass_context
+def lint_normalize_tags_cmd(ctx):
+    """Normalize tags: merge synonymous tags across the wiki using LLM."""
+    from .lint import normalize_tags
+
+    console.print("[cyan]Normalizing tags across wiki...[/cyan]")
+    with console.status("Analyzing tag synonyms..."):
+        fixes = normalize_tags(ctx.obj["base_dir"])
+
+    if fixes:
+        console.print(f"[green]Normalized {len(fixes)} article(s)[/green]")
+        for f in fixes[:10]:
+            console.print(f"  [green]✓[/green] {f}")
+        if len(fixes) > 10:
+            console.print(f"  ...and {len(fixes) - 10} more")
+    else:
+        console.print("[green]Tags are already clean.[/green]")
+
+
 @lint.command("clean")
 @click.pass_context
 def lint_clean_cmd(ctx):

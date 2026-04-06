@@ -161,6 +161,88 @@ def check_orphans(cfg: dict) -> list[str]:
     return issues
 
 
+def normalize_tags(base_dir: Path | None = None) -> list[str]:
+    """System-wide tag normalization: merge synonymous tags using LLM.
+
+    1. Collect all unique tags with frequencies
+    2. Ask LLM to group synonymous tags and pick a canonical form
+    3. Rewrite all articles with normalized tags
+
+    This runs ONCE (or occasionally), not on every auto_fix.
+    """
+    from collections import Counter
+
+    cfg = load_config(base_dir)
+    ensure_dirs(cfg)
+    concepts_dir = Path(cfg["paths"]["concepts"])
+
+    # Collect all tags with frequencies
+    tag_counter = Counter()
+    for md_file in concepts_dir.glob("*.md"):
+        post = frontmatter.load(str(md_file))
+        for t in post.metadata.get("tags", []):
+            tag_counter[t.lower()] += 1
+
+    if len(tag_counter) < 5:
+        return []
+
+    # Build compact tag list for LLM (top 80 tags to avoid overflow)
+    tag_list = "\n".join(
+        f"- {tag} ({count})" for tag, count in tag_counter.most_common(80)
+    )
+
+    prompt = (
+        f"Here are {len(tag_counter)} tags from a knowledge base, with article counts:\n\n"
+        f"{tag_list}\n\n"
+        f"Group SYNONYMOUS tags (same concept, different wording) and pick ONE canonical form for each group.\n"
+        f"Only group truly synonymous tags — 'buddhism' and 'buddhist-ethics' are NOT synonyms.\n\n"
+        f"Output JSON: a dict mapping old_tag → canonical_tag. Only include tags that need renaming.\n"
+        f"Example: {{\"confucian-philosophy\": \"confucianism\", \"daoist-philosophy\": \"daoism\"}}\n"
+        f"Output ONLY the JSON dict, nothing else."
+    )
+
+    try:
+        response = chat(prompt, max_tokens=2048)
+        # Parse JSON from response
+        text = response.strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[1] if "\n" in text else text[3:]
+        if text.endswith("```"):
+            text = text.rsplit("```", 1)[0]
+        start = text.find("{")
+        end = text.rfind("}")
+        if start == -1 or end == -1:
+            return []
+
+        import json
+        tag_map = json.loads(text[start:end + 1])
+    except Exception:
+        return []
+
+    if not tag_map:
+        return []
+
+    # Apply tag renaming across all articles
+    fixes = []
+    for md_file in concepts_dir.glob("*.md"):
+        post = frontmatter.load(str(md_file))
+        tags = post.metadata.get("tags", [])
+        new_tags = []
+        changed = False
+        for t in tags:
+            canonical = tag_map.get(t.lower(), t)
+            new_tags.append(canonical)
+            if canonical != t:
+                changed = True
+
+        if changed:
+            post.metadata["tags"] = sorted(set(new_tags))
+            md_file.write_text(frontmatter.dumps(post), encoding="utf-8")
+            fixes.append(f"Normalized tags for {md_file.stem}")
+
+    return fixes
+
+
 def check_dirty_tags(cfg: dict) -> list[str]:
     """Find articles with malformed tags (LLM prompt leaks, sentences, etc.).
 
@@ -818,7 +900,11 @@ def auto_fix(base_dir: Path | None = None) -> list[str]:
     tag_clean = fix_dirty_tags(base_dir)
     fixes.extend(tag_clean)
 
-    # 3. Fix missing metadata
+    # 3. Normalize synonymous tags (confucian-philosophy → confucianism, etc.)
+    tag_norm = normalize_tags(base_dir)
+    fixes.extend(tag_norm)
+
+    # 4. Fix missing metadata
     for md_file in concepts_dir.glob("*.md"):
         post = frontmatter.load(str(md_file))
         needs_fix = False
