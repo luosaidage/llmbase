@@ -15,14 +15,47 @@ from markdownify import markdownify as md
 from .config import load_config, ensure_dirs
 
 
+def _validate_url(url: str):
+    """Block SSRF: reject private/internal network URLs."""
+    import ipaddress, socket
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"Unsupported URL scheme: {parsed.scheme}")
+    hostname = parsed.hostname or ""
+    if not hostname:
+        raise ValueError("No hostname in URL")
+    # Block obvious internal hostnames
+    if hostname in ("localhost", "127.0.0.1", "0.0.0.0", "[::]", "[::1]"):
+        raise ValueError(f"Blocked internal hostname: {hostname}")
+    # Resolve and check for dangerous private IP ranges
+    try:
+        for info in socket.getaddrinfo(hostname, None):
+            addr = ipaddress.ip_address(info[4][0])
+            if addr.is_loopback or addr.is_link_local:
+                raise ValueError(f"Blocked loopback/link-local IP: {addr}")
+            # Block common internal ranges (cloud metadata, RFC1918)
+            blocked_nets = [
+                ipaddress.ip_network("10.0.0.0/8"),
+                ipaddress.ip_network("172.16.0.0/12"),
+                ipaddress.ip_network("192.168.0.0/16"),
+                ipaddress.ip_network("169.254.0.0/16"),  # AWS/GCP metadata
+            ]
+            for net in blocked_nets:
+                if addr in net:
+                    raise ValueError(f"Blocked internal IP: {addr}")
+    except socket.gaierror:
+        pass  # DNS resolution failed — let requests handle it
+
+
 def ingest_url(url: str, base_dir: Path | None = None) -> Path:
     """Fetch a web article and save as markdown with images downloaded locally."""
+    _validate_url(url)
     cfg = load_config(base_dir)
     ensure_dirs(cfg)
     raw_dir = Path(cfg["paths"]["raw"])
 
     # Fetch page
-    resp = requests.get(url, timeout=30, headers={"User-Agent": "LLMBase/1.0"})
+    resp = requests.get(url, timeout=30, headers={"User-Agent": "LLMBase/1.0"}, allow_redirects=False)
     resp.raise_for_status()
     soup = BeautifulSoup(resp.text, "html.parser")
 

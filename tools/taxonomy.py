@@ -138,7 +138,8 @@ def generate_taxonomy(base_dir: Path | None = None) -> dict:
 
     # Save cache
     path = meta_dir / "taxonomy.json"
-    path.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
+    from .atomic import atomic_write_json
+    atomic_write_json(path, result)
     logger.info(f"[taxonomy] Generated {len(result['categories'])} categories for {len(articles)} articles")
 
     # Sync taxonomy categories back to article tags

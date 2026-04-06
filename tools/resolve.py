@@ -82,10 +82,9 @@ def build_aliases(concepts_dir: Path) -> dict[str, str]:
 
 
 def save_aliases(aliases: dict[str, str], meta_dir: Path):
-    """Write aliases.json to the meta directory."""
-    meta_dir.mkdir(parents=True, exist_ok=True)
-    path = meta_dir / "aliases.json"
-    path.write_text(json.dumps(aliases, indent=2, ensure_ascii=False), encoding="utf-8")
+    """Write aliases.json to the meta directory (atomic)."""
+    from .atomic import atomic_write_json
+    atomic_write_json(meta_dir / "aliases.json", aliases)
 
 
 def load_aliases(meta_dir: Path) -> dict[str, str]:

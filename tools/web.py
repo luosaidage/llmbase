@@ -436,9 +436,13 @@ def create_web_app(base_dir: Path | None = None):
 
         def run_fix():
             import json, logging
+            from .worker import job_lock
             logger = logging.getLogger("llmbase.lint")
-            logger.info("[lint/fix] Starting auto-fix pipeline...")
+            if not job_lock.acquire(blocking=False):
+                logger.warning("[lint/fix] Another job is running, skipping")
+                return
             try:
+                logger.info("[lint/fix] Starting auto-fix pipeline...")
                 fixes = auto_fix(base)
                 logger.info(f"[lint/fix] Done! {len(fixes)} fixes applied")
                 # Persist result
@@ -451,6 +455,8 @@ def create_web_app(base_dir: Path | None = None):
                 )
             except Exception as e:
                 logger.error(f"[lint/fix] Error: {e}")
+            finally:
+                job_lock.release()
 
         threading.Thread(target=run_fix, daemon=True).start()
         return jsonify({"status": "started", "message": "Auto-fix pipeline running in background. Check /api/health for results."})

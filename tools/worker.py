@@ -19,6 +19,12 @@ from .config import load_config, ensure_dirs
 
 logger = logging.getLogger("llmbase.worker")
 
+# Global job lock — prevents concurrent auto_fix, compile, worker tasks
+# from stepping on each other's file operations
+job_lock = threading.Lock()
+_worker_started = False
+_worker_start_lock = threading.Lock()
+
 
 def run_worker(base_dir: Path | None = None):
     """Main worker loop — runs forever, executing scheduled tasks."""
@@ -54,23 +60,35 @@ def run_worker(base_dir: Path | None = None):
         now = time.time()
 
         # Learn from sources
-        if now - last_learn >= learn_interval:
-            _task_learn(base, learn_source, learn_batch)
+        if now - last_learn >= learn_interval and job_lock.acquire(blocking=False):
+            try:
+                _task_learn(base, learn_source, learn_batch)
+            finally:
+                job_lock.release()
             last_learn = now
 
         # Compile new documents
-        if now - last_compile >= compile_interval:
-            _task_compile(base)
+        if now - last_compile >= compile_interval and job_lock.acquire(blocking=False):
+            try:
+                _task_compile(base)
+            finally:
+                job_lock.release()
             last_compile = now
 
         # Regenerate taxonomy periodically
-        if now - last_taxonomy >= taxonomy_interval:
-            _task_taxonomy(base)
+        if now - last_taxonomy >= taxonomy_interval and job_lock.acquire(blocking=False):
+            try:
+                _task_taxonomy(base)
+            finally:
+                job_lock.release()
             last_taxonomy = now
 
         # Health checks and auto-repair
-        if now - last_health >= health_interval:
-            _task_health_check(base)
+        if now - last_health >= health_interval and job_lock.acquire(blocking=False):
+            try:
+                _task_health_check(base)
+            finally:
+                job_lock.release()
             last_health = now
 
         time.sleep(60)  # Check every minute
@@ -203,7 +221,16 @@ def _save_health_report(base: Path, results: dict, fixes: list[str]):
 
 
 def start_worker_thread(base_dir: Path | None = None):
-    """Start worker as a background daemon thread."""
+    """Start worker as a background daemon thread (only once per process).
+
+    Guards against multi-process WSGI spawning duplicate workers.
+    """
+    global _worker_started
+    with _worker_start_lock:
+        if _worker_started:
+            logger.debug("Worker already started in this process, skipping")
+            return None
+        _worker_started = True
     t = threading.Thread(target=run_worker, args=(base_dir,), daemon=True)
     t.start()
     return t

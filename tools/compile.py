@@ -233,7 +233,8 @@ def rebuild_index(base_dir: Path | None = None):
 
     # Write JSON index for programmatic access
     index_json_path = meta_dir / "index.json"
-    index_json_path.write_text(json.dumps(index_entries, indent=2, ensure_ascii=False), encoding="utf-8")
+    from .atomic import atomic_write_json
+    atomic_write_json(index_json_path, index_entries)
 
     # Write markdown index for Obsidian
     index_md = "---\ntitle: Wiki Index\nupdated: {}\n---\n\n# Knowledge Base Index\n\n".format(
@@ -604,4 +605,5 @@ def _build_backlinks(concepts_dir: Path, meta_dir: Path):
                 backlinks[target_key].append(slug)
 
     backlinks_path = meta_dir / "backlinks.json"
-    backlinks_path.write_text(json.dumps(backlinks, indent=2, ensure_ascii=False), encoding="utf-8")
+    from .atomic import atomic_write_json
+    atomic_write_json(backlinks_path, backlinks)
