@@ -21,7 +21,13 @@ dependencies = [
     "python-frontmatter>=1.1.0",
     "watchdog>=4.0.0",
     "pymupdf>=1.24.0",
+    "httpx>=0.27.0",
+    "mcp>=1.0.0",
 ]
+
+[project.optional-dependencies]
+cjk = ["opencc-python-reimplemented>=0.1.7"]
+all = ["llmbase[cjk]"]
 
 [project.scripts]
 llmbase = "tools.cli:main"
