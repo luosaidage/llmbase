@@ -12,12 +12,21 @@ interface Person { name: string; name_local?: string; dates?: string; role?: str
 interface Event { name: string; name_local?: string; date?: string; description?: string; articles: string[] }
 interface Place { name: string; name_local?: string; coords?: [number, number] | null; articles: string[] }
 
-/** Parse date strings like "c.372-289 BCE", "1190 CE", "384-414" into a numeric year. */
+/** Parse date strings like "c.372-289 BCE", "1190 CE", "24th century BCE" into a numeric year. */
 function parseYear(dateStr?: string): number | null {
   if (!dateStr) return null;
   const s = dateStr.replace(/c\.\s*/i, '').replace(/\s+/g, '');
-  // "372-289 BCE" → take first number, negate for BCE
   const bce = /bce|bc/i.test(s);
+
+  // Handle "24th century" / "24th-23rd century" → 2400
+  const centuryMatch = s.match(/(\d+)(?:st|nd|rd|th)\s*[-–]?\s*(?:\d+(?:st|nd|rd|th)\s*)?century/i);
+  if (centuryMatch) {
+    const century = parseInt(centuryMatch[1]);
+    const year = (century - 1) * 100; // 24th century = 2300s
+    return bce ? -year : year;
+  }
+
+  // "372-289 BCE" → take first number
   const match = s.match(/(\d+)/);
   if (!match) return null;
   const year = parseInt(match[1]);
