@@ -25,6 +25,27 @@ from .llm import chat
 logger = logging.getLogger("llmbase.taxonomy")
 
 
+# ─── Customizable constants ──────────────────────────────────────
+# Downstream projects can override these to customise taxonomy behaviour.
+#
+#     import tools.taxonomy as tax
+#     tax.TAXONOMY_LABEL_KEYS = ["zh"]          # single-language labels
+#     tax.TAXONOMY_GENERATOR = my_rule_fn        # skip LLM entirely
+#
+
+# Language keys used in taxonomy labels.  Override to change the set of
+# languages in label dicts (e.g. ["zh"] for a monolingual KB).
+TAXONOMY_LABEL_KEYS: list[str] = ["en", "zh", "ja"]
+
+# Pluggable taxonomy generator.  When set to a callable, generate_taxonomy()
+# calls it instead of the built-in LLM path.  Signature:
+#   (articles: list[dict], cfg: dict) -> list[dict]   # returns category tree
+# The function receives the same article dicts (slug, title, tags, summary)
+# and should return a list of category nodes with id, label, children,
+# article_slugs fields.  Set to None (default) to use the LLM generator.
+TAXONOMY_GENERATOR = None
+
+
 TAXONOMY_SYSTEM_PROMPT = """You are a knowledge base architect. Your job is to analyze a collection
 of wiki articles and produce a deep, well-structured hierarchical taxonomy (like a library catalog
 or an academic classification system).
@@ -121,7 +142,11 @@ def generate_taxonomy(base_dir: Path | None = None) -> dict:
         return {"categories": []}
 
     try:
-        if len(articles) <= 100:
+        # Pluggable strategy: if TAXONOMY_GENERATOR is set, use it
+        if callable(TAXONOMY_GENERATOR):
+            logger.info("[taxonomy] Using custom TAXONOMY_GENERATOR")
+            tree = TAXONOMY_GENERATOR(articles, cfg)
+        elif len(articles) <= 100:
             tree = _generate_single_pass(articles, cfg)
         else:
             tree = _generate_two_phase(articles, cfg)
@@ -560,27 +585,33 @@ def _parse_taxonomy_response(response: str) -> list[dict] | None:
 
 
 def _fix_labels(tree: list[dict]):
-    """Ensure all category labels are trilingual dicts, not strings.
+    """Ensure all category labels are dicts with every TAXONOMY_LABEL_KEYS entry.
 
-    LLMs sometimes return label as a string instead of {"en", "zh", "ja"}.
+    LLMs sometimes return label as a string instead of a dict.
     This normalizes all labels in the tree recursively.
     """
+    keys = TAXONOMY_LABEL_KEYS
     for node in tree:
         label = node.get("label", "")
         if isinstance(label, dict):
-            # Ensure all three languages exist
-            en = label.get("en", label.get("zh", label.get("ja", node.get("id", ""))))
-            label.setdefault("en", en)
-            label.setdefault("zh", en)
-            label.setdefault("ja", en)
+            # Find a usable fallback from any existing key
+            fallback_val = None
+            for k in keys:
+                if isinstance(label.get(k), str) and label[k]:
+                    fallback_val = label[k]
+                    break
+            if fallback_val is None:
+                fallback_val = node.get("id", "")
+            for k in keys:
+                label.setdefault(k, fallback_val)
         else:
-            # String, number, list, null → normalize to trilingual dict
+            # String, number, list, null → normalize to dict
             text = str(label) if label else node.get("id", "unknown")
-            node["label"] = {"en": text, "zh": text, "ja": text}
+            node["label"] = {k: text for k in keys}
         # Coerce dict label values to clean strings
         if isinstance(node["label"], dict):
             fallback = node.get("id", "")
-            for k in ("en", "zh", "ja"):
+            for k in keys:
                 v = node["label"].get(k)
                 node["label"][k] = v if isinstance(v, str) and v else fallback
         # Recurse into children (guard against null/non-list/non-dict items)

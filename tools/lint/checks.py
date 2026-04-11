@@ -10,6 +10,19 @@ from ..config import load_config, ensure_dirs
 from ..llm import chat
 
 
+# ─── Customizable constants ──────────────────────────────────────
+# Downstream can override to adjust lint behaviour.
+#
+#     import tools.lint.checks as checks
+#     checks.ALLOW_CJK_SLUGS = True   # don't flag CJK slugs as issues
+#
+
+# When True, CJK-character slugs (e.g. "仁" instead of "ren") are accepted
+# as valid and will NOT be reported by check_stubs.  Default False preserves
+# the original pinyin-slug convention.
+ALLOW_CJK_SLUGS: bool = False
+
+
 SYSTEM_PROMPT = """You are a knowledge base quality analyst. Your job is to review wiki articles
 and identify issues, inconsistencies, and opportunities for improvement.
 
@@ -245,7 +258,7 @@ def check_stubs(cfg: dict) -> list[str]:
             issues.append(f"Placeholder stub: {slug}")
         elif any(leak in summary.lower() for leak in ["the user says", "the user wants", "the user asks", "the user is"]):
             issues.append(f"LLM prompt leak: {slug}")
-        elif cjk_re.match(slug):
+        elif not ALLOW_CJK_SLUGS and cjk_re.match(slug):
             issues.append(f"CJK slug (should be pinyin): {slug}")
         elif len(content) < 50 and not post.metadata.get("stub"):
             issues.append(f"Near-empty article: {slug} ({len(content)} chars)")

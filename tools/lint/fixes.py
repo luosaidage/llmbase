@@ -14,6 +14,10 @@ from .checks import (
 from .dedup import merge_duplicates
 
 
+# ─── Customizable constants ──────────────────────────────────────
+# Override to change the LLM instructions for stub generation.
+# See tools/compile.py docstring for the full constants contract.
+
 STUB_SYSTEM_PROMPT = """You are a trilingual knowledge base compiler. Generate a stub article
 for a missing concept based on how existing articles reference it.
 

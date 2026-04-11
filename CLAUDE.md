@@ -13,6 +13,24 @@
 - Article slugs are pinyin/kebab-case; titles are bilingual "English / 中文"
 - Never expose specific LLM provider names in public code or commits
 
+## Customization Contract (for downstream projects)
+Downstream projects can override module-level constants at import time to
+customize behavior without forking functions. This is a **stable contract**.
+
+| Module               | Constant                  | Purpose                                  |
+|----------------------|---------------------------|------------------------------------------|
+| tools/compile.py     | SYSTEM_PROMPT             | LLM system message for compilation       |
+| tools/compile.py     | COMPILE_USER_PROMPT       | User prompt template ({title}, {content}, {existing}, {article_format}) |
+| tools/compile.py     | COMPILE_ARTICLE_FORMAT    | Example article format in user prompt    |
+| tools/compile.py     | SECTION_HEADERS           | Language sections for split/merge        |
+| tools/taxonomy.py    | TAXONOMY_SYSTEM_PROMPT    | LLM system message for taxonomy          |
+| tools/taxonomy.py    | TAXONOMY_LABEL_KEYS       | Language keys in label dicts             |
+| tools/taxonomy.py    | TAXONOMY_GENERATOR        | Callable to replace LLM taxonomy (or None) |
+| tools/lint/checks.py | ALLOW_CJK_SLUGS           | Accept CJK slugs as valid (bool)         |
+| tools/lint/checks.py | SYSTEM_PROMPT             | LLM system for deep lint                 |
+| tools/lint/fixes.py  | STUB_SYSTEM_PROMPT        | LLM system for stub generation           |
+| tools/web.py         | derive_session_token()    | Public function: secret → cookie token   |
+
 ## Auto-Fix Pipeline (tools/lint.py:auto_fix)
 1. clean_garbage() — remove template stubs
 2. fix metadata — LLM generates missing summary/tags

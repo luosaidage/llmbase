@@ -14,6 +14,21 @@ from .compile import compile_new, rebuild_index
 from .lint import lint
 
 
+def derive_session_token(secret: str) -> str:
+    """Derive a session cookie token from the API secret.
+
+    This is a public interface so downstream projects that customise
+    serve_spa or add their own auth middleware can generate the same
+    cookie value without reverse-engineering the algorithm.
+
+    Returns an empty string when *secret* is falsy.
+    """
+    if not secret:
+        return ""
+    import hashlib
+    return hashlib.sha256(f"session:{secret}".encode()).hexdigest()[:48]
+
+
 def create_web_app(base_dir: Path | None = None):
     """Create the full web application."""
     import os
@@ -35,8 +50,8 @@ def create_web_app(base_dir: Path | None = None):
         logging.getLogger("llmbase.auth").info(f"Auto-generated API secret: {API_SECRET[:8]}...")
 
     # Generate a session token derived from the secret (never expose the secret itself)
-    import hashlib, hmac
-    SESSION_TOKEN = hashlib.sha256(f"session:{API_SECRET}".encode()).hexdigest()[:48] if API_SECRET else ""
+    import hmac
+    SESSION_TOKEN = derive_session_token(API_SECRET)
 
     def require_auth(f):
         """Protect write endpoints when LLMBASE_API_SECRET is set."""

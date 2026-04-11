@@ -1,4 +1,26 @@
-"""Compile module: LLM reads raw/ and builds a structured wiki."""
+"""Compile module: LLM reads raw/ and builds a structured wiki.
+
+Customization contract
+======================
+Downstream projects may override these module-level constants at import
+time to change compile behavior **without forking any function**:
+
+  SYSTEM_PROMPT           – system message sent to the LLM
+  COMPILE_USER_PROMPT     – user prompt template (placeholders: {title},
+                            {content}, {existing}, {article_format})
+  COMPILE_ARTICLE_FORMAT  – the example article format embedded in the
+                            user prompt (the most common override point)
+  SECTION_HEADERS         – list of (key, markdown_header) tuples that
+                            control how _split_sections / _assemble_sections /
+                            _merge_into handle multi-language content
+
+Example (single-language classical-Chinese KB)::
+
+    import tools.compile as c
+    c.SECTION_HEADERS = [("文言", "## 文言")]
+    c.COMPILE_ARTICLE_FORMAT = "## 文言\\n\\n以文言撰寫完整內容。"
+    c.SYSTEM_PROMPT = "You are a classical-Chinese knowledge compiler..."
+"""
 
 import json
 from datetime import datetime, timezone
@@ -20,6 +42,25 @@ _RAW_TYPE_TO_PLUGIN = {
     "classical_text": "ctext",
     "ctext": "ctext",
 }
+
+
+# ─── Customizable constants ──────────────────────────────────────
+# Downstream projects can override these module-level constants to
+# customize compile behavior without forking.  Example:
+#
+#     import tools.compile as compile_mod
+#     compile_mod.SECTION_HEADERS = [("文言", "## 文言")]
+#     compile_mod.COMPILE_ARTICLE_FORMAT = "## 文言\n\n以文言撰寫完整內容。"
+#     compile_mod.SYSTEM_PROMPT = "You are a classical-Chinese compiler..."
+#
+
+# Language sections used by _split_sections / _assemble_sections / _merge_into.
+# Each entry: (section_key, markdown_header_line).
+SECTION_HEADERS: list[tuple[str, str]] = [
+    ("english", "## English"),
+    ("中文", "## 中文"),
+    ("日本語", "## 日本語"),
+]
 
 
 SYSTEM_PROMPT = """You are a knowledge base compiler. Your job is to read raw source documents
@@ -46,6 +87,63 @@ IMPORTANT — Trilingual output:
 - The summary field in frontmatter should be in English
 - The title field should include both: "English Title / 中文标题"
 - Keep [[wiki-links]] consistent across all three languages (use the same slug)"""
+
+
+# Example article format shown inside the user prompt.
+# Override this to change the per-section instructions the LLM sees.
+COMPILE_ARTICLE_FORMAT = """## English
+
+Full article content in English. Use [[Other Concept]] for cross-references.
+
+## 中文
+
+完整的中文文章内容。使用中文学术风格撰写，不是简单翻译。使用 [[Other Concept]] 进行交叉引用。
+
+## 日本語
+
+完全な日本語の記事内容。学術的な日本語で記述する。[[Other Concept]] でクロスリファレンスを使用する。"""
+
+
+# Full user prompt template.  Placeholders: {title}, {content}, {existing}, {article_format}.
+# Override the entire string, or just override COMPILE_ARTICLE_FORMAT for the common case.
+COMPILE_USER_PROMPT = """I have a raw document titled "{title}" that needs to be compiled into wiki articles.
+
+Source document:
+---
+{content}
+---
+
+EXISTING ARTICLES (you MUST reuse these — DO NOT create new articles for concepts that already exist):
+{existing}
+
+CRITICAL DEDUPLICATION RULES:
+- If a concept ALREADY EXISTS above (even under a different name, translation, or variant), you MUST use ===UPDATE=== with the EXISTING slug
+- A concept with a suffix (e.g., "X说", "X论", "X位") is usually the SAME as the base concept "X" — use UPDATE
+- A concept in one language (e.g., Chinese title) that matches an existing concept in another language (e.g., English slug) is the SAME — use UPDATE
+- When in doubt, UPDATE an existing article rather than creating a new one
+- New articles should only be created for genuinely NEW concepts not covered above
+
+Please:
+1. Identify the key concepts from this document (1-5 concepts)
+2. For each concept, produce a wiki article in this exact format:
+
+===ARTICLE===
+slug: concept-name-here
+title: English Title / 中文标题
+summary: One-line summary in English
+tags: tag1, tag2, tag3
+---
+{article_format}
+===END===
+
+If a concept already exists in the wiki, instead output:
+===UPDATE===
+slug: existing-concept-slug
+append: |
+  Additional content to add from this source.
+===END===
+
+Focus on extracting knowledge, not just summarizing. Each language section should be substantive, not a mere translation."""
 
 
 def compile_new(base_dir: Path | None = None, batch_size: int | None = None) -> list[str]:
@@ -98,54 +196,16 @@ def compile_new(base_dir: Path | None = None, batch_size: int | None = None) -> 
                     content += f"\n\n## File: {f.name}\n\n```\n{f.read_text(errors='ignore')[:5000]}\n```"
 
         # Ask LLM to extract concepts and write articles
-        prompt = f"""I have a raw document titled "{title}" that needs to be compiled into wiki articles.
-
-Source document:
----
-{content[:15000]}
----
-
-EXISTING ARTICLES (you MUST reuse these — DO NOT create new articles for concepts that already exist):
-{chr(10).join('  - ' + c for c in existing_concepts) if existing_concepts else '  (none yet)'}
-
-CRITICAL DEDUPLICATION RULES:
-- If a concept ALREADY EXISTS above (even under a different name, translation, or variant), you MUST use ===UPDATE=== with the EXISTING slug
-- A concept with a suffix (e.g., "X说", "X论", "X位") is usually the SAME as the base concept "X" — use UPDATE
-- A concept in one language (e.g., Chinese title) that matches an existing concept in another language (e.g., English slug) is the SAME — use UPDATE
-- When in doubt, UPDATE an existing article rather than creating a new one
-- New articles should only be created for genuinely NEW concepts not covered above
-
-Please:
-1. Identify the key concepts from this document (1-5 concepts)
-2. For each concept, produce a TRILINGUAL wiki article in this exact format:
-
-===ARTICLE===
-slug: concept-name-here
-title: English Title / 中文标题
-summary: One-line summary in English
-tags: tag1, tag2, tag3
----
-## English
-
-Full article content in English. Use [[Other Concept]] for cross-references.
-
-## 中文
-
-完整的中文文章内容。使用中文学术风格撰写，不是简单翻译。使用 [[Other Concept]] 进行交叉引用。
-
-## 日本語
-
-完全な日本語の記事内容。学術的な日本語で記述する。[[Other Concept]] でクロスリファレンスを使用する。
-===END===
-
-If a concept already exists in the wiki, instead output:
-===UPDATE===
-slug: existing-concept-slug
-append: |
-  Additional trilingual content to add from this source.
-===END===
-
-Focus on extracting knowledge, not just summarizing. Each language section should be substantive, not a mere translation."""
+        existing_text = (
+            chr(10).join('  - ' + c for c in existing_concepts)
+            if existing_concepts else '  (none yet)'
+        )
+        prompt = COMPILE_USER_PROMPT.format(
+            title=title,
+            content=content[:15000],
+            existing=existing_text,
+            article_format=COMPILE_ARTICLE_FORMAT,
+        )
 
         response = chat(prompt, system=SYSTEM_PROMPT, max_tokens=cfg["llm"]["max_tokens"])
 
@@ -496,9 +556,9 @@ def _write_article(article: dict, concepts_dir: Path) -> Path | None:
 def _merge_into(existing_path: Path, article: dict):
     """Merge new article content into an existing article (叠加进化).
 
-    Section-level dedup: splits by ## English / ## 中文 / ## 日本語,
+    Section-level dedup: splits by configured SECTION_HEADERS,
     keeps the longer version of each section. Never blindly appends
-    entire content blocks — prevents 6× duplicate sections.
+    entire content blocks — prevents duplicate sections.
     """
     import re
 
@@ -512,7 +572,7 @@ def _merge_into(existing_path: Path, article: dict):
     new_sections = _split_sections(new_content)
 
     changed = False
-    for lang_key in ("english", "中文", "日本語"):
+    for lang_key, _ in SECTION_HEADERS:
         new_sec = new_sections.get(lang_key, "").strip()
         old_sec = existing_sections.get(lang_key, "").strip()
 
@@ -562,41 +622,52 @@ def _merge_into(existing_path: Path, article: dict):
 
 
 def _split_sections(content: str) -> dict[str, str]:
-    """Split trilingual article into {lang: content} dict."""
+    """Split article into {section_key: content} dict.
+
+    Recognises headers defined in the module-level SECTION_HEADERS list,
+    so downstream projects that override SECTION_HEADERS (e.g. to a
+    single "## 文言" section) will get correct splitting automatically.
+    """
     import re
-    sections = {"_preamble": ""}
+    sections: dict[str, str] = {"_preamble": ""}
     current = "_preamble"
 
-    for line in content.split("\n"):
-        if re.match(r"^## English\s*$", line, re.IGNORECASE):
-            current = "english"
-            sections.setdefault(current, "")
-            continue
-        elif re.match(r"^## 中文\s*$", line):
-            current = "中文"
-            sections.setdefault(current, "")
-            continue
-        elif re.match(r"^## 日本語\s*$", line):
-            current = "日本語"
-            sections.setdefault(current, "")
-            continue
-        elif re.match(r"^---$", line) and current != "_preamble":
-            # Section separator from previous merges — skip
-            continue
+    # Build header → key mapping from SECTION_HEADERS
+    header_map: list[tuple[str, re.Pattern]] = []
+    for key, header in SECTION_HEADERS:
+        # Build a regex: "## English" → r"^## English\s*$"
+        escaped = re.escape(header)
+        flags = re.IGNORECASE if key.isascii() else 0
+        header_map.append((key, re.compile(rf"^{escaped}\s*$", flags)))
 
+    for line in content.split("\n"):
+        matched = False
+        for key, pat in header_map:
+            if pat.match(line):
+                current = key
+                sections.setdefault(current, "")
+                matched = True
+                break
+        if matched:
+            continue
+        if re.match(r"^---$", line) and current != "_preamble":
+            continue
         sections[current] = sections.get(current, "") + line + "\n"
 
     return sections
 
 
 def _assemble_sections(sections: dict[str, str]) -> str:
-    """Reassemble sections into a single content string."""
+    """Reassemble sections into a single content string.
+
+    Uses SECTION_HEADERS for ordering, so downstream overrides are respected.
+    """
     parts = []
     preamble = sections.get("_preamble", "").strip()
     if preamble:
         parts.append(preamble)
 
-    for lang, header in [("english", "## English"), ("中文", "## 中文"), ("日本語", "## 日本語")]:
+    for lang, header in SECTION_HEADERS:
         sec = sections.get(lang, "").strip()
         if sec:
             parts.append(f"{header}\n\n{sec}")
