@@ -54,7 +54,15 @@ LEARN_SOURCES: dict[str, callable] = {}
 def register_learn_source(name: str, handler) -> None:
     """Register a learn source handler.
 
-    handler signature: (batch_size: int, base_dir: Path) -> list
+    handler is called as ``handler(batch_size=N, base_dir=path)``.
+    It MUST accept these two keyword arguments (use **kwargs to be
+    forward-compatible if your handler has extra params)::
+
+        def my_learn(batch_size, base_dir, **kwargs):
+            ...
+            return ["ingested-1"]
+
+    Extra keyword arguments may be passed in future versions.
     """
     LEARN_SOURCES[name] = handler
 

@@ -30,18 +30,31 @@ def derive_session_token(secret: str) -> str:
 
 
 # ─── Customizable constants ──────────────────────────────────────
-# Downstream can override to extend the web layer without forking.
+# Downstream can extend the web layer without forking.
+#
+# Two approaches (can be mixed):
+#
+# 1. EXTRA_ROUTES / hooks — fill these BEFORE calling create_web_app():
 #
 #     import tools.web as web
 #     web.EXTRA_ROUTES.append(("/api/my-endpoint", my_handler, {"methods": ["GET"]}))
 #     web.BEFORE_REQUEST_HOOKS.append(my_auth_middleware)
-#     web.AFTER_REQUEST_HOOKS.append(my_logging_middleware)
+#     app = web.create_web_app(base_dir)
 #
+# 2. Flask Blueprints — register AFTER create_web_app() returns:
+#
+#     app = web.create_web_app(base_dir)
+#     app.register_blueprint(my_blueprint, url_prefix="/api")
+#
+# Approach 1 is simpler; approach 2 is more powerful (middleware, error
+# handlers, nested blueprints).  Both work.
 
-# List of (rule, view_func, options_dict) tuples registered before app returns.
+# List of (rule, view_func, options_dict) tuples.
+# Must be populated BEFORE create_web_app() is called.
 EXTRA_ROUTES: list[tuple] = []
 
 # Callables invoked as Flask before_request / after_request hooks.
+# Must be populated BEFORE create_web_app() is called.
 BEFORE_REQUEST_HOOKS: list = []
 AFTER_REQUEST_HOOKS: list = []
 
