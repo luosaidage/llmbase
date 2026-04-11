@@ -50,6 +50,9 @@ def lint(base_dir: Path | None = None) -> dict:
     total = sum(len(v) for v in results.values())
     results["total_issues"] = total
 
+    from ..hooks import emit
+    emit("after_lint_check", total_issues=total, results=results)
+
     return results
 
 

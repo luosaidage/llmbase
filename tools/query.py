@@ -1,4 +1,18 @@
-"""Query module: Q&A against the wiki, with output filing."""
+"""Query module: Q&A against the wiki, with output filing.
+
+Customization contract
+======================
+Downstream projects can override these module-level constants:
+
+  SYSTEM_PROMPT       – system message for Q&A responses
+  TONE_INSTRUCTIONS   – dict of tone_id → instruction string;
+                        downstream can add/remove/replace tones
+
+Example::
+
+    import tools.query as q
+    q.TONE_INSTRUCTIONS["formal_chinese"] = "請以正式中文回答。"
+"""
 
 import json
 import logging
@@ -14,6 +28,8 @@ from .llm import chat, chat_with_context, extract_json
 logger = logging.getLogger("llmbase.query")
 
 
+# ─── Customizable constants ──────────────────────────────────────
+
 SYSTEM_PROMPT = """You are a research assistant with access to a personal knowledge base wiki.
 Answer questions thoroughly based on the provided context. If the context doesn't contain
 enough information, say so clearly.
@@ -22,7 +38,8 @@ When citing sources, reference the article titles. Use markdown formatting for y
 If asked to create visualizations, output matplotlib code blocks that can be executed."""
 
 
-# Voice/tone modes: each maps to an instruction appended to the system prompt
+# Voice/tone modes: each maps to an instruction appended to the system prompt.
+# Downstream can add custom tones or remove built-in ones.
 TONE_INSTRUCTIONS = {
     "default": "",
     "caveman": (

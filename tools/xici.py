@@ -21,6 +21,14 @@ from .llm import chat
 
 logger = logging.getLogger("llmbase.xici")
 
+# ─── Customizable constants ──────────────────────────────────────
+# Override to change the guided introduction behavior.
+#
+#     import tools.xici as xici
+#     xici.XICI_SYSTEM_PROMPT = "You are a Confucian scholar..."
+#     xici.LANG_STYLES["zh"] = "请用白话文撰写。"
+#
+
 XICI_SYSTEM_PROMPT = """You are a master librarian and intellectual guide. Your task is to write
 a guided introduction (导读) for a personal knowledge base — a living preface that reveals
 the deep structure and significance of the collected knowledge.
@@ -135,6 +143,8 @@ def generate_xici(base_dir: Path | None = None, lang: str = "zh") -> dict:
 
     # Step 2: If target lang is zh, we're done
     if lang == "zh":
+        from .hooks import emit
+        emit("xici_generated", lang="zh", article_count=len(articles))
         return {
             "text": zh_text,
             "themes": themes,
@@ -181,6 +191,9 @@ def generate_xici(base_dir: Path | None = None, lang: str = "zh") -> dict:
 
     # Cache to file
     _save_xici(cfg, lang, result)
+
+    from .hooks import emit
+    emit("xici_generated", lang=lang, article_count=len(articles))
 
     return result
 

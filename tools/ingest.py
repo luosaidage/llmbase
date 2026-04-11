@@ -122,6 +122,10 @@ def ingest_url(url: str, base_dir: Path | None = None) -> Path:
 
     doc_path = doc_dir / "index.md"
     doc_path.write_text(frontmatter.dumps(post), encoding="utf-8")
+
+    from .hooks import emit
+    emit("ingested", source="web", url=url, title=title, path=str(doc_path))
+
     return doc_path
 
 
@@ -163,6 +167,9 @@ def ingest_file(file_path: str, base_dir: Path | None = None) -> Path:
         meta.metadata["compiled"] = False
         meta_path = doc_dir / "index.md"
         meta_path.write_text(frontmatter.dumps(meta), encoding="utf-8")
+
+    from .hooks import emit
+    emit("ingested", source="file", title=src.stem, path=str(dest))
 
     return dest
 

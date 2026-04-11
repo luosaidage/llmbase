@@ -12,6 +12,7 @@ from pathlib import Path
 import frontmatter
 
 from .config import load_config, ensure_dirs
+from . import compile as _compile_mod
 from .compile import _split_sections
 
 
@@ -43,10 +44,15 @@ def export_article(slug: str, base_dir: Path | None = None) -> dict | None:
     # Split content by language
     sections = _split_sections(post.content)
     content = {}
-    for key, header in [("english", "english"), ("zh", "中文"), ("ja", "日本語")]:
-        section = sections.get(header, "").strip()
+    # Map SECTION_HEADERS keys to API-stable short keys for export.
+    # Default mapping: "english" → "english", "中文" → "zh", "日本語" → "ja".
+    # For custom SECTION_HEADERS, section_key is used as-is.
+    _EXPORT_KEY_MAP = {"中文": "zh", "日本語": "ja"}
+    for section_key, _header in _compile_mod.SECTION_HEADERS:
+        section = sections.get(section_key, "").strip()
         if section:
-            content[key] = section
+            export_key = _EXPORT_KEY_MAP.get(section_key, section_key)
+            content[export_key] = section
 
     # Outgoing wiki-links
     link_pattern = re.compile(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]")

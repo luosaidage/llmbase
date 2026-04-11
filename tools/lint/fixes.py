@@ -409,5 +409,8 @@ def auto_fix(base_dir: Path | None = None) -> list[str]:
     tag_fixes = fix_uncategorized(base_dir)
     fixes.extend(tag_fixes)
 
+    from ..hooks import emit
+    emit("after_auto_fix", fix_count=len(fixes), fixes=fixes[:20])
+
     return fixes
 

@@ -17,6 +17,14 @@ from .llm import chat
 
 logger = logging.getLogger("llmbase.entities")
 
+# ─── Customizable constants ──────────────────────────────────────
+# Override to change entity extraction behavior for different domains.
+#
+#     import tools.entities as ent
+#     ent.ENTITY_SYSTEM_PROMPT = "Extract scientific entities..."
+#     ent.ENTITY_PROMPT = "... custom format ..."
+#
+
 ENTITY_SYSTEM_PROMPT = """You are a knowledge base analyst. Extract structured entities
 (people, events, places) from wiki article metadata.
 
@@ -123,11 +131,18 @@ def extract_entities(base_dir: Path | None = None) -> dict:
 
     # Cache
     _save_entities(meta_dir, result)
+    people_count = len(result.get('people', []))
+    events_count = len(result.get('events', []))
+    places_count = len(result.get('places', []))
     logger.info(
-        f"[entities] Extracted {len(result.get('people', []))} people, "
-        f"{len(result.get('events', []))} events, "
-        f"{len(result.get('places', []))} places"
+        f"[entities] Extracted {people_count} people, "
+        f"{events_count} events, {places_count} places"
     )
+
+    from .hooks import emit
+    emit("entity_extracted",
+         people_count=people_count, events_count=events_count,
+         places_count=places_count, article_count=len(articles))
 
     return result
 

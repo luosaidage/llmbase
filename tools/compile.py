@@ -165,6 +165,13 @@ def compile_new(base_dir: Path | None = None, batch_size: int | None = None) -> 
     batch = uncompiled[:batch_size]
     compiled_articles = []
 
+    from .hooks import emit
+    try:
+        _preview_titles = [frontmatter.load(str(p)).metadata.get("title", p.parent.name) for p in batch[:5]]
+    except Exception:
+        _preview_titles = [p.parent.name for p in batch[:5]]
+    emit("before_compile", batch_size=len(batch), titles=_preview_titles)
+
     # Load existing index for context
     index = _load_index(meta_dir)
     existing_concepts = _list_existing_concepts(concepts_dir)
@@ -271,6 +278,10 @@ def compile_new(base_dir: Path | None = None, batch_size: int | None = None) -> 
         except Exception:
             pass  # Non-critical
 
+    if compiled_articles:
+        emit("after_compile_batch", count=len(compiled_articles),
+             articles=compiled_articles[:10])
+
     return compiled_articles
 
 
@@ -350,6 +361,9 @@ def rebuild_index(base_dir: Path | None = None):
 
     # Write backlinks map (uses aliases for correct resolution)
     _build_backlinks(concepts_dir, meta_dir)
+
+    from .hooks import emit
+    emit("index_rebuilt", article_count=len(index_entries))
 
     return index_entries
 

@@ -170,6 +170,12 @@ def generate_taxonomy(base_dir: Path | None = None) -> dict:
     # Sync taxonomy categories back to article tags
     _sync_taxonomy_to_tags(result.get("categories", []), concepts_dir)
 
+    from .hooks import emit
+    emit("taxonomy_generated",
+         category_count=len(result["categories"]),
+         article_count=len(articles),
+         generated=result.get("generated", False))
+
     return result
 
 

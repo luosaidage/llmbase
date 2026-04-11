@@ -29,7 +29,30 @@ customize behavior without forking functions. This is a **stable contract**.
 | tools/lint/checks.py | ALLOW_CJK_SLUGS           | Accept CJK slugs as valid (bool)         |
 | tools/lint/checks.py | SYSTEM_PROMPT             | LLM system for deep lint                 |
 | tools/lint/fixes.py  | STUB_SYSTEM_PROMPT        | LLM system for stub generation           |
+| tools/query.py       | SYSTEM_PROMPT             | LLM system message for Q&A               |
+| tools/query.py       | TONE_INSTRUCTIONS         | Dict of tone_id → instruction string     |
+| tools/xici.py        | XICI_SYSTEM_PROMPT        | LLM system for guided introduction       |
+| tools/xici.py        | LANG_STYLES               | Dict of lang → style instruction         |
+| tools/entities.py    | ENTITY_SYSTEM_PROMPT      | LLM system for entity extraction         |
+| tools/entities.py    | ENTITY_PROMPT             | User prompt template for entities        |
+| tools/export.py      | (uses SECTION_HEADERS)    | Language sections from compile module    |
 | tools/web.py         | derive_session_token()    | Public function: secret → cookie token   |
+
+## Lifecycle Hooks (tools/hooks.py)
+Downstream registers callbacks via `tools.hooks.register(event, callback)`.
+
+| Event                | Emitter          | Kwargs                                     |
+|----------------------|------------------|--------------------------------------------|
+| `ingested`           | ingest.py        | source, title, path, url?                  |
+| `before_compile`     | compile.py       | batch_size, titles                         |
+| `compiled`           | compile.py       | source, work_id, raw_type, title, metadata |
+| `after_compile_batch`| compile.py       | count, articles                            |
+| `index_rebuilt`      | compile.py       | article_count                              |
+| `taxonomy_generated` | taxonomy.py      | category_count, article_count, generated   |
+| `after_lint_check`   | lint/checks.py   | total_issues, results                      |
+| `after_auto_fix`     | lint/fixes.py    | fix_count, fixes                           |
+| `xici_generated`     | xici.py          | lang, article_count                        |
+| `entity_extracted`   | entities.py      | people/events/places_count, article_count  |
 
 ## Auto-Fix Pipeline (tools/lint.py:auto_fix)
 1. clean_garbage() — remove template stubs
