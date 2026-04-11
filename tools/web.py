@@ -490,12 +490,21 @@ def create_web_app(base_dir: Path | None = None):
         if not idx.exists():
             return jsonify({"status": "error", "message": "Not found"})
         post = frontmatter.load(str(idx))
+        # Configurable content cap: sources.max_content_chars (default 50000)
+        # null → use hard ceiling (500K); explicit int → clamped to [0, 500K]
+        _HARD_CEILING = 500_000
+        raw_max = cfg.get("sources", {}).get("max_content_chars", 50000)
+        try:
+            max_chars = min(max(0, int(raw_max)), _HARD_CEILING) if raw_max is not None else _HARD_CEILING
+        except (TypeError, ValueError):
+            max_chars = 50000
+        content = post.content[:max_chars]
         return jsonify({
             "slug": slug,
             "title": post.metadata.get("title", slug),
             "type": post.metadata.get("type", "unknown"),
             "compiled": post.metadata.get("compiled", False),
-            "content": post.content[:10000],  # Cap at 10K chars for preview
+            "content": content,
             "metadata": {k: str(v) for k, v in post.metadata.items()},
         })
 

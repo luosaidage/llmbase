@@ -181,6 +181,64 @@ def ingest_directory(dir_path: str, base_dir: Path | None = None) -> list[Path]:
     return results
 
 
+def _safe_meta_value(v):
+    """Coerce a frontmatter value to a JSON-safe type, redacting local paths."""
+    if v is None:
+        return v
+    if isinstance(v, (int, float, bool)):
+        return v
+    if isinstance(v, str):
+        return None if _is_local_path(v) else v
+    if isinstance(v, (list, tuple)):
+        return [x for x in (_safe_meta_value(i) for i in v) if x is not None]
+    if isinstance(v, dict):
+        return {str(k): sv for k, sv in ((str(k), _safe_meta_value(val)) for k, val in v.items()) if sv is not None}
+    s = str(v)
+    return None if _is_local_path(s) else s
+
+
+def _sanitize_entry(entry: dict, raw_dir_str: str = "") -> dict:
+    """Sanitize fields that may leak local filesystem paths.
+
+    - ``path`` is converted to a relative slug (the part after ``raw/``)
+    - Other string values that look like absolute filesystem paths are removed
+    """
+    sanitized = {}
+    for k, v in entry.items():
+        if k == "path" and isinstance(v, str):
+            # Convert absolute path to relative slug for the frontend
+            if raw_dir_str and raw_dir_str in v:
+                sanitized[k] = v.split(raw_dir_str)[-1].lstrip("/\\")
+            else:
+                # Fallback: take last path component
+                sanitized[k] = Path(v).name
+            continue
+        # Redact string values that look like absolute local paths
+        if isinstance(v, str) and _is_local_path(v):
+            continue
+        sanitized[k] = v
+    return sanitized
+
+
+def _is_local_path(v: str) -> bool:
+    """Check if a string looks like a local filesystem path.
+
+    Requires at least two path components (e.g. /home/user) to avoid
+    false-positives on site-relative URLs like /works/foo.
+    """
+    if v.startswith(("http://", "https://")):
+        return False
+    # Unix absolute paths with 2+ components (e.g. /home/user, not /works)
+    if v.startswith("/") and v.count("/") >= 2:
+        return True
+    # Windows absolute paths: C:\... or UNC \\server\...
+    if len(v) >= 3 and v[1] == ":" and v[2] in ("/", "\\"):
+        return True
+    if v.startswith("\\\\"):
+        return True
+    return False
+
+
 def list_raw(base_dir: Path | None = None) -> list[dict]:
     """List all raw documents with their metadata."""
     cfg = load_config(base_dir)
@@ -188,6 +246,7 @@ def list_raw(base_dir: Path | None = None) -> list[dict]:
     if not raw_dir.exists():
         return []
 
+    raw_dir_str = str(raw_dir) + "/"
     docs = []
     for doc_dir in sorted(raw_dir.iterdir()):
         if not doc_dir.is_dir():
@@ -195,25 +254,35 @@ def list_raw(base_dir: Path | None = None) -> list[dict]:
         index_path = doc_dir / "index.md"
         if index_path.exists():
             post = frontmatter.load(str(index_path))
-            docs.append({
+            entry = {
                 "path": str(doc_dir),
                 "title": post.metadata.get("title", doc_dir.name),
                 "type": post.metadata.get("type", "unknown"),
                 "compiled": post.metadata.get("compiled", False),
                 "ingested_at": post.metadata.get("ingested_at", ""),
-            })
+            }
+            # Include all frontmatter fields so downstream can group/filter
+            # (e.g. by work, chapter, source, canon, etc.)
+            for k, v in post.metadata.items():
+                if k not in entry:
+                    entry[k] = _safe_meta_value(v)
+            docs.append(_sanitize_entry(entry, raw_dir_str))
         else:
             # Check for any markdown file
             md_files = list(doc_dir.glob("*.md"))
             if md_files:
                 post = frontmatter.load(str(md_files[0]))
-                docs.append({
+                entry = {
                     "path": str(doc_dir),
                     "title": post.metadata.get("title", doc_dir.name),
                     "type": post.metadata.get("type", "unknown"),
                     "compiled": post.metadata.get("compiled", False),
                     "ingested_at": post.metadata.get("ingested_at", ""),
-                })
+                }
+                for k, v in post.metadata.items():
+                    if k not in entry:
+                        entry[k] = _safe_meta_value(v)
+                docs.append(_sanitize_entry(entry, raw_dir_str))
     return docs
 
 

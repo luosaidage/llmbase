@@ -155,7 +155,7 @@ export function Ingest() {
                   </td>
                   <td className="px-5 py-3 text-on-surface-variant">{d.ingested_at?.slice(0, 10)}</td>
                   <td className="px-5 py-3">
-                    <button onClick={() => viewRaw(d.path.split('/raw/')[1] || d.title)}
+                    <button onClick={() => viewRaw(d.path.includes('/raw/') ? d.path.split('/raw/')[1] : d.path || d.title)}
                       className="p-1.5 rounded-lg hover:bg-surface-highest text-on-surface-variant hover:text-primary transition-colors"
                       title="Preview raw document">
                       <Icon name="visibility" className="text-[16px]" />
