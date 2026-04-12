@@ -289,6 +289,33 @@ Add to your AI client's MCP settings:
 
 See [MCP Server Guide →](docs/mcp-server.md)
 
+## Customization & Extension
+
+LLMBase is designed as a library, not a framework. Downstream projects customize via module-level constants and hook registration — no forking needed. See [full guide](docs/customization.md).
+
+```python
+import tools.compile as c
+import tools.query as q
+from tools.hooks import register
+from tools.worker import register_learn_source, register_job
+
+# Single-language KB
+c.SECTION_HEADERS = [("wenyan", "## 文言")]
+c.COMPILE_ARTICLE_FORMAT = "## 文言\n\n以文言撰寫完整內容。"
+
+# Custom tone mode
+q.TONE_INSTRUCTIONS["formal_zh"] = "請以正式中文回答。"
+
+# React to lifecycle events (10 events available)
+register("compiled", lambda source, title, **kw: sync.push(source, title))
+
+# Custom learn source + background job
+register_learn_source("my_corpus", my_learn_handler)
+register_job("my_sync", interval_hours=2, handler=my_sync_fn)
+```
+
+**Extension points**: module constants (compile, query, taxonomy, xici, entities, lint) | lifecycle hooks (10 events) | worker (custom learn sources + jobs) | web (custom routes, middleware, configurable static_dir)
+
 ## Design Philosophy
 
 - **Domain-agnostic** — No hardcoded domains. Taxonomy, categories, and structure emerge from content via LLM
@@ -296,7 +323,7 @@ See [MCP Server Guide →](docs/mcp-server.md)
 - **Explorations add up** — Every query, every lint pass, every batch ingestion compounds the knowledge
 - **LLM writes, you curate** — The LLM maintains the wiki; you direct what to learn
 - **Incremental, not batch** — New data merges into existing articles (叠加进化), never starts from scratch
-- **Trilingual by default** — Built for international scholarship with alias resolution across scripts
+- **Extensible without forking** — Override module constants, register hooks, add custom learn sources and API routes
 - **Agent-native** — Every feature is accessible via API. Humans and agents are equal users
 - **Self-healing** — The system detects and repairs its own issues: broken links, duplicates, dirty tags, miscategorization
 
@@ -368,6 +395,22 @@ LLMBase 是一个 **LLM 驱动的个人知识库系统**，灵感来自 [Karpath
 | **分类体系** | LLM 自动生成层级分类（参考四库全书分类法），左栏按分类浏览 |
 | **Agent API** | HTTP API + Python SDK，便于 AI agent 直接查询、搜索、贡献知识 |
 | **知识图谱** | D3.js 力导向图，可视化概念间的连接关系，发现意外关联 |
+
+### 定制与扩展
+
+LLMBase 作为库而非框架设计。下游项目通过覆盖模块常数和注册钩子来定制行为，无需 fork。详见 [完整指南](docs/customization.md)。
+
+```python
+import tools.compile as c
+from tools.hooks import register
+from tools.worker import register_learn_source
+
+c.SECTION_HEADERS = [("wenyan", "## 文言")]     # 单语知识库
+register("compiled", my_sync_handler)            # 编译后同步
+register_learn_source("my_corpus", my_handler)   # 自定义学习源
+```
+
+**扩展点**: 模块常数 (compile, query, taxonomy, xici, entities, lint) | 生命周期钩子 (10 个事件) | Worker (自定义学习源 + 后台作业) | Web (自定义路由、中间件、可配 static_dir)
 
 ### 快速开始
 

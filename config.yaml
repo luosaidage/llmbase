@@ -17,8 +17,16 @@ compile:
   batch_size: 10
   backlinks: true
 
+# Web server
+# web:
+#   static_dir: "./my-frontend/dist"  # Custom frontend path (default: static/dist)
+
 search:
   port: 5555
+
+# Source API
+# sources:
+#   max_content_chars: 50000          # Content cap for /api/sources/<slug> (max 500K)
 
 lint:
   web_search: false

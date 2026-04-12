@@ -124,6 +124,17 @@ POST /api/wiki/clean
 → { "removed": 5, "slugs": ["slug1", "slug2"] }
 ```
 
+## Raw Sources
+
+```
+GET /api/sources
+→ { "documents": [{ "path", "title", "type", "compiled", "ingested_at", ...all frontmatter fields }] }
+
+GET /api/sources/<slug>
+→ { "slug", "title", "type", "compiled", "content", "metadata" }
+Content capped by config: sources.max_content_chars (default 50K, max 500K)
+```
+
 ## Ingest & Compile (auth required)
 
 ```

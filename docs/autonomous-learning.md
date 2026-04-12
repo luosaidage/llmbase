@@ -83,3 +83,31 @@ llmbase ingest dir ./my-documents/
 - `/health` page shows last check results
 - Worker logs: `[learn]`, `[compile]`, `[taxonomy]`, `[health]`
 - `wiki/_meta/health.json` — last health report
+
+## Custom Learn Sources
+
+Register your own data source without forking the worker:
+
+```python
+from tools.worker import register_learn_source
+
+def learn_from_arxiv(batch_size, base_dir, **kwargs):
+    papers = fetch_arxiv(batch_size)
+    return [ingest_paper(p, base_dir) for p in papers]
+
+register_learn_source("arxiv", learn_from_arxiv)
+```
+
+Then set `learn_source: arxiv` in config.yaml.
+
+## Custom Background Jobs
+
+Add recurring tasks to the worker loop:
+
+```python
+from tools.worker import register_job
+
+register_job("backup", interval_hours=12, handler=backup_wiki)
+```
+
+See [Customization Guide](customization.md) for full details.
