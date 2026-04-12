@@ -2,6 +2,35 @@
 
 All notable changes to LLMBase (llmwiki) will be documented in this file.
 
+## [0.3.0] — 2026-04-12
+
+### Added
+- **Customization Contract** — downstream projects override module-level constants without forking
+  - `COMPILE_USER_PROMPT`, `COMPILE_ARTICLE_FORMAT`, `SECTION_HEADERS` (compile.py)
+  - `TONE_INSTRUCTIONS` (query.py), `XICI_SYSTEM_PROMPT`, `LANG_STYLES` (xici.py)
+  - `ENTITY_SYSTEM_PROMPT`, `ENTITY_PROMPT`, `ENTITY_ARTICLE_FORMATTER` (entities.py)
+  - `TAXONOMY_GENERATOR`, `TAXONOMY_LABEL_KEYS` (taxonomy.py)
+  - `ALLOW_CJK_SLUGS` (lint/checks.py)
+- **Lifecycle Hooks** — 10 events across 7 modules: `ingested`, `before_compile`, `compiled`, `after_compile_batch`, `index_rebuilt`, `taxonomy_generated`, `after_lint_check`, `after_auto_fix`, `xici_generated`, `entity_extracted`
+- **Worker Extensibility** — `register_learn_source()` and `register_job()` replace hardcoded source routing; built-in cbeta/wikisource auto-registered
+- **Web Extensibility** — `EXTRA_ROUTES`, `BEFORE_REQUEST_HOOKS`, `AFTER_REQUEST_HOOKS`; configurable `web.static_dir` in config.yaml
+- **Session Token API** — `derive_session_token()` public function for custom auth middleware
+- **Source API Enhancement** — `/api/sources` returns all frontmatter fields; `/api/sources/<slug>` content cap configurable via `sources.max_content_chars`
+- **QA Concept Promotion** — semi-auto promotion of Q&A answers to wiki concepts
+- **Customization Guide** — `docs/customization.md` with examples for constants, hooks, worker, web
+
+### Changed
+- **Taxonomy Phase 2** — removed domain-specific examples (Confucianism, Buddhism, etc.) from prompt; now fully domain-agnostic
+- **Export** — `export_article()` uses `compile.SECTION_HEADERS` at runtime (not import-time copy)
+- **Merge** — `_merge_into` / `_split_sections` / `_assemble_sections` driven by configurable `SECTION_HEADERS`
+- **Design Philosophy** — added "Extensible without forking" principle
+
+### Fixed
+- **Static dir** — pip-installed deployments correctly resolve `static/dist` path
+- **Supabase sync** — upsert 409 conflict handling
+- **Path security** — local filesystem paths redacted from `/api/sources` output; `web.static_dir` path-traversal guarded
+- **Negative config values** — `max_content_chars` clamped; worker `interval_hours` validated
+
 ## [0.2.0] — 2026-04-07
 
 ### Added
