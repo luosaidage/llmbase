@@ -188,6 +188,47 @@ web.BEFORE_REQUEST_HOOKS.append(log_requests)
 app = web.create_web_app(base_dir)
 ```
 
+### Protected Extra Routes
+
+`require_auth` is a module-level decorator that enforces the same
+`LLMBASE_API_SECRET` / session-cookie check used by built-in write
+endpoints. Wrap custom handlers with it so downstream routes honour the
+same auth contract:
+
+```python
+import tools.web as web
+from tools.web import require_auth
+from flask import jsonify
+
+@require_auth
+def my_write_handler():
+    return jsonify({"status": "ok"})
+
+web.EXTRA_ROUTES.append(("/api/my-write", my_write_handler, {"methods": ["POST"]}))
+app = web.create_web_app(base_dir)
+```
+
+When `LLMBASE_API_SECRET` is unset (local/dev), the decorator is a
+no-op — same behaviour as the built-in routes.
+
+### Runtime Config (base_dir, cfg)
+
+`create_web_app` publishes the resolved `base_dir`, loaded `cfg`, and
+auth tokens under `app.config["llmbase"]`. Handlers registered via
+`EXTRA_ROUTES` or blueprints should read from there rather than calling
+`Path.cwd()` or re-loading config:
+
+```python
+from flask import current_app, jsonify
+
+def my_handler():
+    llm = current_app.config["llmbase"]
+    base_dir = llm["base_dir"]   # Path — project root
+    cfg = llm["cfg"]             # dict — loaded config.yaml
+    # ... api_secret / session_token also available if needed
+    return jsonify({"root": str(base_dir)})
+```
+
 ### Session Token
 
 ```python

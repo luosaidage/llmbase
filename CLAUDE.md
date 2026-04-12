@@ -38,6 +38,8 @@ customize behavior without forking functions. This is a **stable contract**.
 | tools/entities.py    | ENTITY_ARTICLE_FORMATTER  | Callable to format article list for LLM  |
 | tools/export.py      | (uses SECTION_HEADERS)    | Language sections from compile module    |
 | tools/web.py         | derive_session_token()    | Public function: secret → cookie token   |
+| tools/web.py         | require_auth              | Module-level decorator for EXTRA_ROUTES  |
+| tools/web.py         | app.config["llmbase"]     | Runtime dict: base_dir, cfg, api_secret, session_token |
 | tools/web.py         | EXTRA_ROUTES              | List of (rule, handler, options) tuples  |
 | tools/web.py         | BEFORE/AFTER_REQUEST_HOOKS| Request middleware lists                  |
 | tools/worker.py      | LEARN_SOURCES             | Dict of source_name → learn handler      |

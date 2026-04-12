@@ -1,10 +1,12 @@
 """Web UI server — serves React frontend + API endpoints."""
 
+import hmac
 import json
+from functools import wraps
 from pathlib import Path
 
 import frontmatter
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, current_app, request, jsonify, send_from_directory
 
 from .config import load_config, ensure_dirs
 from .search import search
@@ -59,10 +61,42 @@ BEFORE_REQUEST_HOOKS: list = []
 AFTER_REQUEST_HOOKS: list = []
 
 
+def require_auth(f):
+    """Decorator: protect a route when LLMBASE_API_SECRET is set.
+
+    Module-level so EXTRA_ROUTES handlers and downstream blueprints can
+    wrap their own views with the same auth as built-in write endpoints.
+    Reads the secret/session-token from ``current_app.config["llmbase"]``
+    populated by :func:`create_web_app`; when the secret is empty the
+    decorator is a no-op (local/dev mode).
+
+    Usage::
+
+        from tools.web import require_auth
+
+        @require_auth
+        def my_handler():
+            ...
+    """
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        llm_cfg = current_app.config.get("llmbase", {})
+        api_secret = llm_cfg.get("api_secret", "")
+        session_token = llm_cfg.get("session_token", "")
+        if not api_secret:
+            return f(*args, **kwargs)
+        auth = request.headers.get("Authorization", "").replace("Bearer ", "")
+        cookie = request.cookies.get("llmbase_auth", "")
+        if (hmac.compare_digest(auth, api_secret)
+                or hmac.compare_digest(cookie, session_token)):
+            return f(*args, **kwargs)
+        return jsonify({"status": "error", "message": "Unauthorized"}), 401
+    return decorated
+
+
 def create_web_app(base_dir: Path | None = None):
     """Create the full web application."""
     import os
-    from functools import wraps
 
     base = Path(base_dir) if base_dir else Path.cwd()
     cfg = load_config(base)
@@ -99,23 +133,17 @@ def create_web_app(base_dir: Path | None = None):
         logging.getLogger("llmbase.auth").info(f"Auto-generated API secret: {API_SECRET[:8]}...")
 
     # Generate a session token derived from the secret (never expose the secret itself)
-    import hmac
     SESSION_TOKEN = derive_session_token(API_SECRET)
 
-    def require_auth(f):
-        """Protect write endpoints when LLMBASE_API_SECRET is set."""
-        @wraps(f)
-        def decorated(*args, **kwargs):
-            if not API_SECRET:
-                return f(*args, **kwargs)  # No secret = open (local/dev mode)
-            auth = request.headers.get("Authorization", "").replace("Bearer ", "")
-            cookie = request.cookies.get("llmbase_auth", "")
-            # Constant-time comparison to prevent timing attacks
-            if (hmac.compare_digest(auth, API_SECRET)
-                    or hmac.compare_digest(cookie, SESSION_TOKEN)):
-                return f(*args, **kwargs)
-            return jsonify({"status": "error", "message": "Unauthorized"}), 401
-        return decorated
+    # Publish runtime state for extension handlers (EXTRA_ROUTES, blueprints,
+    # middleware) and for the module-level ``require_auth`` decorator. Reach
+    # these via ``flask.current_app.config["llmbase"]``.
+    app.config["llmbase"] = {
+        "base_dir": base,
+        "cfg": cfg,
+        "api_secret": API_SECRET,
+        "session_token": SESSION_TOKEN,
+    }
 
     # ─── API Routes ────────────────────────────────────────────
 
