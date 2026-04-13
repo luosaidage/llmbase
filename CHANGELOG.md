@@ -2,6 +2,19 @@
 
 All notable changes to LLMBase (llmwiki) will be documented in this file.
 
+## [0.5.0] — 2026-04-13
+
+### ⚠️ Breaking
+- **`get_fallback_models()` no longer auto-generates a fallback chain.** Empty/unset `LLMBASE_FALLBACK_MODELS` now means *no fallback* (only the primary model is retried). Previous releases guessed `gpt-4o-mini`, `MiniMax-M2.5`, etc., which silently failed on aggregator deployments where the API token only had rights to the primary model. Downstream that relies on fallback must now set the env var explicitly:
+  ```
+  LLMBASE_FALLBACK_MODELS=gpt-4o-mini,gpt-3.5-turbo
+  ```
+
+### Added
+- **`LLMBASE_PRIMARY_RETRIES`** (default 3) and **`LLMBASE_FALLBACK_RETRIES`** (default 1) env vars — tune retry budget per role. Helpful for aggregators with transient 5xx where the primary model recovers if retried more aggressively before falling back.
+- **`/api/ask` returns `output_path`** when `file_back=true` — frontend no longer has to guess the filed-back filename.
+- **`query()` `return_path` flag** — when True, returns `{"answer", "output_path"}` dict instead of bare string. `query_with_search(return_context=True)` also includes `output_path` in its dict.
+
 ## [0.4.0] — 2026-04-12
 
 ### Added

@@ -80,8 +80,14 @@ def query(
     file_back: bool = False,
     base_dir: Path | None = None,
     tone: str = "default",
-) -> str:
-    """Ask a question against the wiki and return the answer."""
+    return_path: bool = False,
+) -> str | dict:
+    """Ask a question against the wiki and return the answer.
+
+    By default returns the answer string. When ``return_path=True`` returns
+    a dict ``{"answer": str, "output_path": str | None}`` — useful for API
+    callers that want to expose the filed-back output location to clients.
+    """
     cfg = load_config(base_dir)
     ensure_dirs(cfg)
 
@@ -89,7 +95,8 @@ def query(
     context_files = _gather_context(question, cfg)
 
     if not context_files:
-        return "No articles found in the wiki. Run `llmbase compile` first to build the wiki from raw documents."
+        msg = "No articles found in the wiki. Run `llmbase compile` first to build the wiki from raw documents."
+        return {"answer": msg, "output_path": None} if return_path else msg
 
     # Build the prompt based on output format and tone
     format_instruction = _format_instruction(output_format)
@@ -107,9 +114,10 @@ def query(
     )
 
     # File back into wiki if requested
-    if file_back:
-        _file_output(question, answer, output_format, cfg)
+    output_path = _file_output(question, answer, output_format, cfg) if file_back else None
 
+    if return_path:
+        return {"answer": answer, "output_path": output_path}
     return answer
 
 
@@ -183,8 +191,7 @@ Which articles (by title) are most relevant? List up to 10, one per line, just t
         max_tokens=cfg["llm"]["max_tokens"],
     )
 
-    if file_back:
-        _file_output(question, answer, "markdown", cfg)
+    output_path = _file_output(question, answer, "markdown", cfg) if file_back else None
 
     if return_context:
         # Extract slugs from consulted articles
@@ -193,7 +200,7 @@ Which articles (by title) are most relevant? List up to 10, one per line, just t
             if any(cf["path"] == entry["title"] for cf in context_files):
                 consulted.append({"slug": entry["slug"], "title": entry["title"]})
 
-        result: dict = {"answer": answer, "consulted": consulted}
+        result: dict = {"answer": answer, "consulted": consulted, "output_path": output_path}
 
         if promote:
             try:
@@ -485,8 +492,15 @@ that will be provided. Use plt.savefig() at the end.""",
     return instructions.get(output_format, instructions["markdown"])
 
 
-def _file_output(question: str, answer: str, output_format: str, cfg: dict):
-    """File a query output back into the wiki."""
+def _file_output(question: str, answer: str, output_format: str, cfg: dict) -> str:
+    """File a query output back into the wiki.
+
+    Returns a *sanitized* path of the written file, relative to the project
+    base when possible — never an absolute filesystem path — to avoid
+    leaking server directory structure through unauthenticated endpoints
+    like ``/api/ask``. Falls back to just the filename if the configured
+    outputs dir lies outside the base.
+    """
     outputs_dir = Path(cfg["paths"]["outputs"])
     outputs_dir.mkdir(parents=True, exist_ok=True)
 
@@ -499,7 +513,17 @@ def _file_output(question: str, answer: str, output_format: str, cfg: dict):
     post.metadata["type"] = f"query_{output_format}"
     post.metadata["created"] = datetime.now(timezone.utc).isoformat()
 
-    (outputs_dir / filename).write_text(frontmatter.dumps(post), encoding="utf-8")
+    output_path = outputs_dir / filename
+    output_path.write_text(frontmatter.dumps(post), encoding="utf-8")
+
+    # Sanitize: return a path relative to the project base when possible;
+    # otherwise fall back to the bare filename. Never return an absolute
+    # filesystem path (info-disclosure on unauth /api/ask).
+    base_dir = Path(cfg.get("base_dir") or ".").resolve()
+    try:
+        return str(output_path.resolve().relative_to(base_dir))
+    except ValueError:
+        return filename
 
 
 def _load_index(meta_dir: Path) -> list[dict]:

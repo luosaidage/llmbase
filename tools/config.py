@@ -12,7 +12,9 @@ def load_config(base_dir: Path | None = None) -> dict:
         base_dir = Path.cwd()
     config_path = base_dir / "config.yaml"
     if not config_path.exists():
-        return _defaults()
+        cfg = _defaults(base_dir)
+        cfg["base_dir"] = str(Path(base_dir).resolve())
+        return cfg
     with open(config_path) as f:
         cfg = yaml.safe_load(f)
     # Resolve relative paths against base_dir
@@ -20,11 +22,12 @@ def load_config(base_dir: Path | None = None) -> dict:
         p = cfg.get("paths", {}).get(key)
         if p:
             cfg["paths"][key] = str((base_dir / p).resolve())
+    cfg["base_dir"] = str(Path(base_dir).resolve())
     return cfg
 
 
-def _defaults() -> dict:
-    base = Path.cwd()
+def _defaults(base_dir: Path | None = None) -> dict:
+    base = Path(base_dir) if base_dir else Path.cwd()
     return {
         "llm": {"model": "claude-sonnet-4-6", "max_tokens": 16384},
         "paths": {

@@ -531,13 +531,18 @@ def create_web_app(base_dir: Path | None = None):
                     "answer": result["answer"],
                     "consulted": result.get("consulted", []),
                 }
+                if result.get("output_path"):
+                    payload["output_path"] = result["output_path"]
                 if "promotion" in result:
                     payload["promotion"] = result["promotion"]
                 return jsonify(payload)
             return jsonify({"answer": result})
         else:
-            answer = query(q, file_back=file_back, base_dir=base, tone=tone)
-            return jsonify({"answer": answer})
+            result = query(q, file_back=file_back, base_dir=base, tone=tone, return_path=True)
+            payload = {"answer": result["answer"]}
+            if result.get("output_path"):
+                payload["output_path"] = result["output_path"]
+            return jsonify(payload)
 
     @app.route("/api/tones", methods=["GET"])
     def api_tones():

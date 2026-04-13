@@ -35,20 +35,37 @@ def get_default_model() -> str:
 
 
 def get_fallback_models() -> list[str]:
-    """Get fallback model list from env. Comma-separated."""
+    """Get fallback model list from env. Comma-separated; empty = no fallback.
+
+    Since 0.5.0: an empty/unset ``LLMBASE_FALLBACK_MODELS`` means *no*
+    fallback — only the primary model is retried. Earlier versions
+    auto-generated a fallback chain (e.g. gpt-4o → gpt-4o-mini), which
+    silently broke aggregator deployments where the API token only had
+    rights to the primary model. Downstream that wants fallback must now
+    set the env var explicitly, e.g.::
+
+        LLMBASE_FALLBACK_MODELS=gpt-4o-mini,gpt-3.5-turbo
+    """
     fallbacks = os.getenv("LLMBASE_FALLBACK_MODELS", "")
-    if fallbacks:
-        return [m.strip() for m in fallbacks.split(",") if m.strip()]
-    # Auto-generate fallbacks based on primary model
-    primary = get_default_model()
-    defaults = []
-    if "M2.7" in primary or "2.7" in primary:
-        defaults = ["MiniMax-M2.5", "deepseek-chat"]
-    elif "gpt-4o" in primary:
-        defaults = ["gpt-4o-mini", "gpt-3.5-turbo"]
-    elif "claude" in primary.lower():
-        defaults = ["claude-3-haiku-20240307"]
-    return defaults
+    if not fallbacks:
+        return []
+    return [m.strip() for m in fallbacks.split(",") if m.strip()]
+
+
+def _get_retries(primary: bool) -> int:
+    """Per-model retry budget. Configurable via env, with sane defaults."""
+    if primary:
+        env_key, default = "LLMBASE_PRIMARY_RETRIES", 3
+    else:
+        env_key, default = "LLMBASE_FALLBACK_RETRIES", 1
+    raw = os.getenv(env_key, "")
+    if not raw:
+        return default
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        logger.warning(f"Invalid {env_key}={raw!r}, using default {default}")
+        return default
 
 
 def _call_llm(messages: list, model: str, max_tokens: int) -> str:
@@ -145,7 +162,7 @@ def chat(
     models_to_try = [model] + get_fallback_models()
 
     for i, current_model in enumerate(models_to_try):
-        retries = 3 if i == 0 else 1  # More retries for primary model
+        retries = _get_retries(primary=(i == 0))
         for attempt in range(retries):
             try:
                 result = _call_llm(messages, current_model, max_tokens)
