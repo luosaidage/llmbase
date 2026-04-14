@@ -1,7 +1,7 @@
 ---
 name: llmwiki
-version: "0.1.1"
-description: "LLM-powered personal knowledge base. Ingest raw documents, compile into a structured interlinked wiki, query with deep research, self-heal. Works for any domain."
+version: "0.6.2"
+description: "LLM-powered personal knowledge base. Raw documents in, an LLM compiles them into a structured interlinked wiki with trilingual articles, emergent taxonomy, and self-healing. One operations contract serves CLI, HTTP, and MCP."
 author: Hosuke
 homepage: https://github.com/Hosuke/llmbase
 source: https://github.com/Hosuke/llmbase
@@ -14,7 +14,6 @@ keywords:
   - research
   - mcp
   - personal-wiki
-  - rag
   - multilingual
   - self-healing
   - agent-tools
@@ -24,48 +23,51 @@ install: "pip install llmwiki"
 requires:
   credentials:
     - name: LLMBASE_API_KEY
-      description: "API key for any OpenAI-compatible LLM provider (user-supplied)"
+      description: "API key for any OpenAI-compatible LLM endpoint (user-supplied)"
       required: true
     - name: LLMBASE_BASE_URL
-      description: "LLM API base URL (default: https://api.openai.com/v1)"
+      description: "LLM API base URL"
       required: false
     - name: LLMBASE_MODEL
-      description: "Model name (default: gpt-4o)"
+      description: "Primary model name"
+      required: false
+    - name: LLMBASE_FALLBACK_MODELS
+      description: "Comma-separated fallback model chain (empty = no fallback)"
       required: false
   permissions:
-    - network: "Fetches URLs during ingest (user-initiated, with SSRF protection)"
-    - filesystem: "Reads/writes markdown files in local raw/ and wiki/ directories"
-    - server: "Optional: web UI (localhost:5555), agent API (localhost:5556), MCP server (stdio)"
+    - network: "Fetches URLs during ingest (SSRF-protected), corpus plugins (CBETA/Wikisource/ctext), and scheduled fetches when the autonomous worker is enabled"
+    - filesystem: "Reads/writes markdown under local raw/ and wiki/"
+    - server: "Optional: web UI (:5555), agent API (:5556), MCP server (stdio)"
   notes: |
-    This skill manages a local knowledge base. All network access is user-initiated
-    (ingesting URLs). The web server and worker are optional features that users
-    explicitly enable. No data is sent anywhere except the configured LLM API.
+    Manages a local knowledge base. Network activity covers user-initiated
+    ingest (URLs, PDFs, corpus plugins) plus the autonomous worker when
+    explicitly enabled in config. Web server and worker are opt-in. No data
+    is sent anywhere except the configured LLM API.
 ---
 
 # llmwiki
 
-Build an LLM-powered personal knowledge base. Raw documents go in, an LLM compiles them into a structured, interlinked wiki, and you query & enhance it over time. Every exploration adds up.
+A personal knowledge base that an LLM _compiles_, not just stores. Raw documents go in, an LLM writes trilingual (EN / 中文 / 日本語) wiki articles with `[[wiki-links]]`, backlinks, and an emergent taxonomy. The MCP server dispatches every tool through `tools/operations.py`; the CLI exposes the same registry via `llmbase ops call`; individual HTTP/CLI wrappers are being migrated onto the registry over time.
 
-**PyPI**: `pip install llmwiki`
-**GitHub**: https://github.com/Hosuke/llmbase
-**Demo**: https://huazangge-production.up.railway.app
+- **PyPI**: `pip install llmwiki`
+- **CLI command**: `llmbase` (the package name and the command differ)
+- **GitHub**: https://github.com/Hosuke/llmbase
+- **Demo**: https://huazangge-production.up.railway.app
 
 ## Setup
 
 ```bash
 pip install llmwiki
 
-# Create a new knowledge base
 mkdir my-kb && cd my-kb
 
-# Configure LLM (any OpenAI-compatible API)
 cat > .env << 'EOF'
 LLMBASE_API_KEY=sk-your-key
-LLMBASE_BASE_URL=https://api.openai.com/v1
-LLMBASE_MODEL=gpt-4o
+LLMBASE_BASE_URL=https://your-endpoint/v1
+LLMBASE_MODEL=your-model
+# Optional: LLMBASE_FALLBACK_MODELS=backup-1,backup-2
 EOF
 
-# Initialize config
 cat > config.yaml << 'EOF'
 llm:
   max_tokens: 16384
@@ -79,73 +81,30 @@ EOF
 
 | Command | Description |
 |---------|-------------|
-| `llmwiki ingest url <url>` | Ingest a web article |
-| `llmwiki ingest pdf <file>` | Ingest a PDF (auto-chunks) |
-| `llmwiki ingest file <file>` | Ingest any local file |
-| `llmwiki ingest dir <dir>` | Ingest all files from a directory |
-| `llmwiki compile new` | Compile new raw docs into wiki articles |
-| `llmwiki compile index` | Rebuild index + aliases |
-| `llmwiki query "<question>"` | Ask a question (deep research) |
-| `llmwiki query "<q>" --tone wenyan` | Ask in classical Chinese style |
-| `llmwiki query "<q>" --tone scholar` | Ask in academic style |
-| `llmwiki search query "<term>"` | Full-text search |
-| `llmwiki lint check` | Health check (8 categories) |
-| `llmwiki lint heal` | Full self-heal: check → fix → recheck |
-| `llmwiki lint clean` | Remove garbage articles |
-| `llmwiki lint dedup` | Detect and merge duplicates |
-| `llmwiki lint normalize-tags` | Merge synonymous tags |
-| `llmwiki web` | Start web UI at localhost:5555 |
-| `llmwiki serve` | Start agent HTTP API at localhost:5556 |
-| `llmwiki mcp` | Start MCP server (stdio) |
-| `llmwiki stats` | Show KB statistics |
+| `llmbase ingest url <url>` | Ingest a web article |
+| `llmbase ingest pdf <file>` | Ingest a PDF (auto-chunks) |
+| `llmbase ingest file <file>` | Ingest any local file |
+| `llmbase ingest dir <dir>` | Ingest all files from a directory |
+| `llmbase ingest cbeta-learn --batch 10` | Corpus plugin: Buddhist canon |
+| `llmbase ingest ctext-book 论语 /analects/zh` | Corpus plugin: Chinese classics |
+| `llmbase compile new` | Compile new raw docs incrementally (3-layer dedup) |
+| `llmbase compile all` | Full rebuild |
+| `llmbase compile index` | Rebuild index + aliases |
+| `llmbase query "<q>"` | Ask a question (single-pass; add `--deep` for multi-step research) |
+| `llmbase query "<q>" --tone wenyan` | 📜 classical Chinese voice |
+| `llmbase query "<q>" --tone scholar` | 🎓 academic voice |
+| `llmbase query "<q>" --tone eli5` | 👶 simple voice |
+| `llmbase query "<q>" --tone caveman` | 🦴 primitive voice |
+| `llmbase query "<q>" --file-back` | File answer back into the wiki |
+| `llmbase lint check` | 8-category structural health check |
+| `llmbase lint heal` | Check → fix → re-check → report |
+| `llmbase lint deep` | LLM deep quality analysis |
+| `llmbase web` | Web UI at :5555 |
+| `llmbase serve` | Agent HTTP API at :5556 |
+| `llmbase mcp` | Start MCP server (stdio) |
+| `llmbase stats` | KB statistics |
 
-## Workflows
-
-### Build a Knowledge Base from Scratch
-
-```
-1. llmwiki ingest url https://example.com/topic-overview
-2. llmwiki ingest pdf ./my-research-paper.pdf
-3. llmwiki compile new
-4. llmwiki query "What are the key concepts?"
-5. llmwiki lint heal
-```
-
-### Daily Learning Routine
-
-```
-1. Find a new article → llmwiki ingest url <url>
-2. llmwiki compile new
-3. llmwiki query "How does this relate to what I already know?"
-4. Knowledge compounds with each cycle
-```
-
-### Autonomous Mode (set and forget)
-
-```yaml
-# config.yaml
-worker:
-  enabled: true
-  learn_source: wikisource  # or: cbeta, both
-  learn_interval_hours: 6
-  compile_interval_hours: 1
-  health_check_interval_hours: 24
-```
-
-Then `llmwiki web` — the server learns, compiles, and self-heals on its own.
-
-### Health Maintenance
-
-```
-llmwiki lint check        # See issues
-llmwiki lint heal         # Auto-fix everything
-```
-
-The auto-fix pipeline: clean garbage → fix dirty tags → normalize tags → fix metadata → fix broken links → merge duplicates → regenerate taxonomy.
-
-## MCP Integration
-
-Register as an MCP server so any AI client can use the knowledge base directly:
+## MCP Integration (for AI clients)
 
 ```json
 {
@@ -158,32 +117,92 @@ Register as an MCP server so any AI client can use the knowledge base directly:
 }
 ```
 
-Available MCP tools: `kb_search`, `kb_ask`, `kb_get`, `kb_list`, `kb_backlinks`, `kb_taxonomy`, `kb_stats`, `kb_xici`, `kb_ingest`, `kb_compile`, `kb_lint`.
+Tools exposed by the MCP server:
+
+| Tool | Purpose |
+|------|---------|
+| `kb_search` | Full-text search over compiled concepts |
+| `kb_search_raw` | Verbatim full-text fallback over raw/ sources (v0.6.2+) |
+| `kb_ask` | Deep-research Q&A with tone modes |
+| `kb_get` | Get article by slug or alias (`空`, `kong`, `emptiness` all work) |
+| `kb_list` | List articles, filter by tag |
+| `kb_backlinks` | Find articles citing a given article |
+| `kb_taxonomy` | Multilingual category tree |
+| `kb_stats` | Article count, word count |
+| `kb_xici` | Guided reading (导读) |
+| `kb_ingest` | Ingest a URL |
+| `kb_compile` | Compile raw → wiki |
+| `kb_lint` | Health check / auto-fix |
+| `kb_export` / `kb_export_article` / `kb_export_tag` / `kb_export_graph` | Structured export for downstream projects |
+
+All tools are declared in `tools/operations.py` — downstream projects register custom ops via `operations.register(...)` and they become available on CLI + MCP automatically.
+
+Agents mounted on this server can answer from compiled concepts, fall back to raw sources with `kb_search_raw` when compile glossed a detail, ingest new material mid-session, and trigger healing.
+
+## Workflows
+
+### Build a KB from scratch
+
+```
+llmbase ingest url https://example.com/topic
+llmbase ingest pdf ./paper.pdf
+llmbase compile new
+llmbase query "What are the key concepts?"
+llmbase lint heal
+```
+
+### Autonomous mode (deploy once, server keeps learning)
+
+```yaml
+# config.yaml
+worker:
+  enabled: true
+  learn_source: cbeta         # built-in: cbeta | wikisource | both; custom via register_learn_source()
+  learn_interval_hours: 6
+  compile_interval_hours: 1
+  health_check_interval_hours: 24
+
+health:
+  auto_fix_broken_links: true
+  max_stubs_per_run: 10
+```
+
+The worker starts under the production WSGI entrypoint (`wsgi.py` → `start_worker_thread`). Deploy with `gunicorn wsgi:app`; `llmbase web` alone does not self-start the worker.
+
+### Daily use as agent memory
+
+1. Agent receives a task → calls `kb_search` for relevant concepts
+2. If the compiled answer is too abstract → calls `kb_search_raw` for verbatim detail
+3. Learns something new → calls `kb_ingest` with the URL
+4. Optionally `kb_compile` to fold it into concepts for next session
+5. Periodically `kb_lint` heals the graph
 
 ## Key Concepts
 
-- **Raw → Wiki → Query**: three-layer architecture (Karpathy pattern)
-- **Trilingual**: articles compiled in English, 中文, 日本語
-- **叠加进化**: knowledge merges into existing articles, never starts from scratch
-- **Domain-agnostic**: no hardcoded domains — works for any field
-- **Self-healing**: auto-detects and repairs broken links, duplicates, dirty tags
-- **Alias resolution**: `[[参禅]]` → `can-chan.md` across languages and scripts
-- **Agent-native**: every feature accessible via CLI, HTTP API, and MCP
+- **Synthesis, not archiving** — LLM reads raw material and writes composed articles; storage is the cheap part
+- **Two-layer recall** — `kb_search` (concepts) + `kb_search_raw` (verbatim raw sources)
+- **Trilingual default** — every article has EN / 中文 / 日本語 sections
+- **叠加进化** — new data merges into existing concepts, never overwrites
+- **Domain-agnostic** — taxonomy emerges per-domain, nothing hardcoded
+- **Self-healing** — 7-step auto-fix pipeline repairs drift
+- **Alias resolution** — `[[参禅]]` → `can-chan.md` across scripts and simplified/traditional
+- **Registry-backed ops** — MCP dispatches every tool through `operations.py`; CLI exposes the same registry via `llmbase ops list` / `llmbase ops call`; direct HTTP/CLI wrappers are being migrated onto the registry
 
 ## Tips
 
-- Use `--file-back` to save Q&A answers back into the wiki
-- Use `--tone wenyan` for Chinese users (classical Chinese responses)
-- Run `llmwiki lint heal` after large ingestion batches
-- The web UI at `/health` has buttons for all repair operations
-- Knowledge graph at `/graph` — use the density slider for large KBs
+- `--file-back` saves Q&A answers into the wiki so future queries benefit
+- `--tone wenyan` for Chinese users (classical Chinese responses)
+- Run `llmbase lint heal` after large ingestion batches
+- Web UI `/health` has buttons for every repair op
+- Knowledge graph at `/graph` — density slider for large KBs
 - Timeline at `/explore` — requires `entities: { enabled: true }` in config
 
 ## Security & Privacy
 
-- **All data stays local**: wiki files are plain markdown on your filesystem
-- **LLM API key**: user-supplied, stored in `.env` (never committed to git)
-- **Network access**: only when you explicitly ingest a URL (with SSRF protection)
-- **Web server**: optional, localhost-only by default
-- **Autonomous worker**: opt-in via config, disabled by default
-- **No telemetry**: llmwiki sends nothing except LLM API calls to your configured provider
+- **All data stays local** — wiki files are plain markdown on your filesystem
+- **LLM API key** — user-supplied, loaded from `.env`
+- **Network access** — user-initiated (URL ingest, SSRF-protected) plus corpus plugins (`cbeta-learn`, `wikisource-learn`, `ctext-book`) and the autonomous worker when enabled
+- **Web server** — optional; binds `0.0.0.0` so LAN-accessible by default — front with a reverse proxy or bind override for public exposure
+- **API secret** — cloud deployments (with `PORT` env) gate most mutating endpoints behind `LLMBASE_API_SECRET` (auto-generated if unset). Note: `/api/ask` is open by default and writes Q&A back via `file_back`; only promotion to concepts requires the secret
+- **Autonomous worker** — opt-in via config, disabled by default
+- **No telemetry** — nothing is sent anywhere except the configured LLM API
