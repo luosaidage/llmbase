@@ -30,19 +30,50 @@ Be specific and actionable in your findings. Reference article titles and specif
 
 
 
+def _load_articles(concepts_dir: Path) -> list[dict]:
+    """Parse every article's frontmatter + content exactly once.
+
+    Returned dicts are shared by all lint checks, so each file is read and
+    parsed a single time per lint() pass instead of once per check.
+    """
+    articles = []
+    if not concepts_dir.exists():
+        return articles
+    for md_file in sorted(concepts_dir.glob("*.md")):
+        post = frontmatter.load(str(md_file))
+        articles.append({
+            "path": md_file,
+            "slug": md_file.stem,
+            "title": post.metadata.get("title", md_file.stem),
+            "summary": post.metadata.get("summary", ""),
+            "tags": post.metadata.get("tags", []) or [],
+            "content": post.content,
+            "metadata": post.metadata,
+        })
+    return articles
+
+
 def lint(base_dir: Path | None = None) -> dict:
     """Run all lint checks on the wiki."""
+    from ..resolve import load_aliases
+
     cfg = load_config(base_dir)
     ensure_dirs(cfg)
 
+    concepts_dir = Path(cfg["paths"]["concepts"])
+    meta_dir = Path(cfg["paths"]["meta"])
+    articles = _load_articles(concepts_dir)
+    existing_slugs = {a["slug"].lower() for a in articles}
+    aliases = load_aliases(meta_dir)
+
     results = {
-        "structural": check_structural(cfg),
-        "broken_links": check_broken_links(cfg),
-        "orphans": check_orphans(cfg),
-        "missing_metadata": check_missing_metadata(cfg),
-        "dirty_tags": check_dirty_tags(cfg),
-        "duplicates": check_duplicates(cfg),
-        "stubs": check_stubs(cfg),
+        "structural": check_structural(cfg, articles=articles),
+        "broken_links": check_broken_links(cfg, articles=articles, existing_slugs=existing_slugs, aliases=aliases),
+        "orphans": check_orphans(cfg, articles=articles),
+        "missing_metadata": check_missing_metadata(cfg, articles=articles),
+        "dirty_tags": check_dirty_tags(cfg, articles=articles),
+        "duplicates": check_duplicates(cfg, articles=articles),
+        "stubs": check_stubs(cfg, articles=articles),
         "uncategorized": check_uncategorized(cfg, base_dir),
     }
 
@@ -97,7 +128,7 @@ Format your response as a structured markdown report."""
 
 
 
-def check_structural(cfg: dict) -> list[str]:
+def check_structural(cfg: dict, articles: list[dict] | None = None) -> list[str]:
     """Check for structural issues."""
     issues = []
     concepts_dir = Path(cfg["paths"]["concepts"])
@@ -109,7 +140,10 @@ def check_structural(cfg: dict) -> list[str]:
     if not (meta_dir / "index.json").exists():
         issues.append("Missing JSON index (index.json)")
 
-    article_count = len(list(concepts_dir.glob("*.md")))
+    if articles is None:
+        article_count = len(list(concepts_dir.glob("*.md")))
+    else:
+        article_count = len(articles)
     if article_count == 0:
         issues.append("No articles in the wiki")
 
@@ -117,7 +151,12 @@ def check_structural(cfg: dict) -> list[str]:
 
 
 
-def check_broken_links(cfg: dict) -> list[str]:
+def check_broken_links(
+    cfg: dict,
+    articles: list[dict] | None = None,
+    existing_slugs: set[str] | None = None,
+    aliases: dict | None = None,
+) -> list[str]:
     """Find broken wiki-links [[target]] that don't have corresponding articles.
 
     Uses alias resolution so that [[参禅]] correctly resolves to can-chan.md
@@ -129,28 +168,32 @@ def check_broken_links(cfg: dict) -> list[str]:
     concepts_dir = Path(cfg["paths"]["concepts"])
     meta_dir = Path(cfg["paths"]["meta"])
     link_pattern = re.compile(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]")
-    existing_slugs = {f.stem.lower() for f in concepts_dir.glob("*.md")}
-    aliases = load_aliases(meta_dir)
 
-    for md_file in concepts_dir.glob("*.md"):
-        content = md_file.read_text()
+    if articles is None:
+        articles = _load_articles(concepts_dir)
+    if existing_slugs is None:
+        existing_slugs = {a["slug"].lower() for a in articles}
+    if aliases is None:
+        aliases = load_aliases(meta_dir)
+
+    for art in articles:
+        content = art["content"]
+        slug = art["slug"]
         for match in link_pattern.finditer(content):
             raw_target = match.group(1).strip()
-            # Try alias resolution first
             resolved = resolve_link(raw_target, aliases)
             if resolved and resolved in existing_slugs:
                 continue
-            # Fall back to old normalization
             simple = raw_target.lower().replace(" ", "-")
             if simple in existing_slugs:
                 continue
-            issues.append(f"Broken link in {md_file.stem}: [[{match.group(1)}]]")
+            issues.append(f"Broken link in {slug}: [[{match.group(1)}]]")
 
     return issues
 
 
 
-def check_orphans(cfg: dict) -> list[str]:
+def check_orphans(cfg: dict, articles: list[dict] | None = None) -> list[str]:
     """Find articles that are not linked to from any other article."""
     issues = []
     concepts_dir = Path(cfg["paths"]["concepts"])
@@ -163,35 +206,41 @@ def check_orphans(cfg: dict) -> list[str]:
     backlinks = json.loads(backlinks_path.read_text())
     linked_slugs = set(backlinks.keys())
 
-    for md_file in concepts_dir.glob("*.md"):
-        slug = md_file.stem.lower()
-        if slug not in linked_slugs:
-            issues.append(f"Orphan article (no incoming links): {md_file.stem}")
+    if articles is None:
+        articles = _load_articles(concepts_dir)
+
+    for art in articles:
+        slug = art["slug"]
+        if slug.lower() not in linked_slugs:
+            issues.append(f"Orphan article (no incoming links): {slug}")
 
     return issues
 
 
 
-def check_missing_metadata(cfg: dict) -> list[str]:
+def check_missing_metadata(cfg: dict, articles: list[dict] | None = None) -> list[str]:
     """Find articles with missing or incomplete metadata."""
     issues = []
     concepts_dir = Path(cfg["paths"]["concepts"])
 
-    for md_file in concepts_dir.glob("*.md"):
-        post = frontmatter.load(str(md_file))
-        slug = md_file.stem
-        if not post.metadata.get("title"):
+    if articles is None:
+        articles = _load_articles(concepts_dir)
+
+    for art in articles:
+        slug = art["slug"]
+        meta = art["metadata"]
+        if not meta.get("title"):
             issues.append(f"Missing title: {slug}")
-        if not post.metadata.get("summary"):
+        if not meta.get("summary"):
             issues.append(f"Missing summary: {slug}")
-        if not post.metadata.get("tags"):
+        if not meta.get("tags"):
             issues.append(f"Missing tags: {slug}")
 
     return issues
 
 
 
-def check_dirty_tags(cfg: dict) -> list[str]:
+def check_dirty_tags(cfg: dict, articles: list[dict] | None = None) -> list[str]:
     """Find articles with malformed tags (LLM prompt leaks, sentences, etc.).
 
     Valid tags should be short (< 30 chars), lowercase, no sentences.
@@ -200,10 +249,12 @@ def check_dirty_tags(cfg: dict) -> list[str]:
     issues = []
     concepts_dir = Path(cfg["paths"]["concepts"])
 
-    for md_file in concepts_dir.glob("*.md"):
-        post = frontmatter.load(str(md_file))
-        tags = post.metadata.get("tags", [])
-        slug = md_file.stem
+    if articles is None:
+        articles = _load_articles(concepts_dir)
+
+    for art in articles:
+        tags = art["tags"]
+        slug = art["slug"]
 
         dirty = []
         for tag in tags:
@@ -227,7 +278,7 @@ def check_dirty_tags(cfg: dict) -> list[str]:
 
 
 
-def check_stubs(cfg: dict) -> list[str]:
+def check_stubs(cfg: dict, articles: list[dict] | None = None) -> list[str]:
     """Find garbage/empty stub articles that should be cleaned.
 
     Detects:
@@ -242,12 +293,15 @@ def check_stubs(cfg: dict) -> list[str]:
     concepts_dir = Path(cfg["paths"]["concepts"])
     cjk_re = re.compile(r'^[\u4e00-\u9fff\u3400-\u4dbf]+$')
 
-    for md_file in concepts_dir.glob("*.md"):
-        post = frontmatter.load(str(md_file))
-        title = post.metadata.get("title", "")
-        summary = post.metadata.get("summary", "")
-        content = post.content.strip()
-        slug = md_file.stem
+    if articles is None:
+        articles = _load_articles(concepts_dir)
+
+    for art in articles:
+        title = art["title"] if isinstance(art["title"], str) else ""
+        summary = art["summary"] if isinstance(art["summary"], str) else ""
+        content = art["content"].strip()
+        slug = art["slug"]
+        meta = art["metadata"]
 
         if "English Title / 中文标题" in title:
             issues.append(f"Unfilled template: {slug}")
@@ -263,7 +317,7 @@ def check_stubs(cfg: dict) -> list[str]:
             issues.append(f"LLM prompt leak: {slug}")
         elif not ALLOW_CJK_SLUGS and cjk_re.match(slug):
             issues.append(f"CJK slug (should be pinyin): {slug}")
-        elif len(content) < 50 and not post.metadata.get("stub"):
+        elif len(content) < 50 and not meta.get("stub"):
             issues.append(f"Near-empty article: {slug} ({len(content)} chars)")
 
     return issues
@@ -283,7 +337,7 @@ def check_uncategorized(cfg: dict, base_dir: Path | None = None) -> list[str]:
 
 
 
-def check_duplicates(cfg: dict) -> list[str]:
+def check_duplicates(cfg: dict, articles: list[dict] | None = None) -> list[str]:
     """Detect duplicate articles using scored heuristics.
 
     High-confidence pairs (score >= 3, e.g. identical CJK title) are
@@ -293,21 +347,24 @@ def check_duplicates(cfg: dict) -> list[str]:
     if not concepts_dir.exists():
         return []
 
-    articles = []
-    for md_file in sorted(concepts_dir.glob("*.md")):
-        post = frontmatter.load(str(md_file))
-        articles.append({
-            "slug": md_file.stem,
-            "title": post.metadata.get("title", md_file.stem),
-            "tags": set(t.lower() for t in post.metadata.get("tags", [])),
-            "summary": post.metadata.get("summary", ""),
-        })
+    if articles is None:
+        articles = _load_articles(concepts_dir)
 
-    if len(articles) < 2:
+    dup_articles = [
+        {
+            "slug": a["slug"],
+            "title": a["title"] if isinstance(a["title"], str) else a["slug"],
+            "tags": set(str(t).lower() for t in a["tags"]),
+            "summary": a["summary"] if isinstance(a["summary"], str) else "",
+        }
+        for a in articles
+    ]
+
+    if len(dup_articles) < 2:
         return []
 
     from .dedup import _find_duplicate_candidates
-    candidates = _find_duplicate_candidates(articles)
+    candidates = _find_duplicate_candidates(dup_articles)
     issues = []
     for slug_a, slug_b in candidates:
         issues.append(f"Likely duplicate: {slug_a} <-> {slug_b}")
