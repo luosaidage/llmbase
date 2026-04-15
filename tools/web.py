@@ -1,12 +1,98 @@
 """Web UI server — serves React frontend + API endpoints."""
 
+import hashlib
 import hmac
 import json
+from email.utils import formatdate
 from functools import wraps
 from pathlib import Path
 
 import frontmatter
 from flask import Flask, current_app, request, jsonify, send_from_directory
+
+
+def _kb_etag(meta_dir: Path, extra: str = "") -> tuple[str | None, str | None]:
+    """Return (ETag, Last-Modified) derived from index.json mtime.
+
+    *extra* mixes a stable per-request key (e.g. query string) into the ETag
+    so distinct query shapes get distinct cache entries while still sharing
+    the underlying KB-version signal.
+    """
+    idx = meta_dir / "index.json"
+    try:
+        st = idx.stat()
+    except OSError:
+        return None, None
+    raw = f"{st.st_mtime}:{st.st_size}:{extra}".encode()
+    etag = hashlib.md5(raw).hexdigest()[:16]
+    return f'W/"{etag}"', formatdate(st.st_mtime, usegmt=True)
+
+
+def _concepts_fingerprint(concepts_dir: Path) -> str:
+    """Short hash of concepts/*.md (name+mtime+size) — for etags that depend
+    on article content, not just the index."""
+    h = hashlib.md5()
+    try:
+        entries = sorted(concepts_dir.glob("*.md"))
+    except OSError:
+        return ""
+    for p in entries:
+        try:
+            st = p.stat()
+        except OSError:
+            continue
+        h.update(f"{p.name}:{st.st_mtime}:{st.st_size}\n".encode())
+    return h.hexdigest()[:16]
+
+
+def _apply_kb_cache_headers(resp, etag: str | None, last_mod: str | None):
+    if etag:
+        resp.headers["ETag"] = etag
+        if last_mod:
+            resp.headers["Last-Modified"] = last_mod
+        resp.headers["Cache-Control"] = "no-cache"
+    return resp
+
+
+def _not_modified(etag: str, last_mod: str | None):
+    """Return a 304 carrying the validators (RFC 7232 §4.1)."""
+    from flask import make_response
+    resp = make_response("", 304)
+    resp.headers["ETag"] = etag
+    if last_mod:
+        resp.headers["Last-Modified"] = last_mod
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
+
+
+def _if_none_match_hits(header: str | None, etag: str) -> bool:
+    """RFC 7232-aware match: handles '*', comma lists, and W/ vs strong tags."""
+    if not header or not etag:
+        return False
+    h = header.strip()
+    if h == "*":
+        return True
+    target = etag[2:] if etag.startswith("W/") else etag
+    for raw in h.split(","):
+        cand = raw.strip()
+        if not cand:
+            continue
+        if cand.startswith("W/"):
+            cand = cand[2:]
+        if cand == target:
+            return True
+    return False
+
+
+def _normalize_tags(value) -> list[str]:
+    """Coerce frontmatter tags to a list[str]; tolerate string/None."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, (list, tuple)):
+        return [str(t) for t in value]
+    return [str(value)]
 
 from .config import load_config, ensure_dirs
 from .search import search
@@ -221,9 +307,29 @@ def create_web_app(base_dir: Path | None = None):
     def api_taxonomy():
         """Get hierarchical category taxonomy. ?lang=zh|en|ja"""
         from .taxonomy import build_taxonomy
+        cfg = load_config(base)
+        meta_dir = Path(cfg["paths"]["meta"])
         lang = request.args.get("lang", "zh")
+        # Taxonomy depends on both KB version (index.json) and the on-disk
+        # taxonomy.json. Mix taxonomy.json mtime + lang into the etag.
+        tx_path = meta_dir / "taxonomy.json"
+        tx_sig = ""
+        try:
+            tst = tx_path.stat()
+            tx_sig = f"{tst.st_mtime}:{tst.st_size}"
+        except OSError:
+            pass
+        # build_taxonomy resolves titles from concepts/*.md at request time,
+        # so concept edits (with no taxonomy.json rewrite) still change the
+        # response — fold concept fingerprint into the etag.
+        concepts_dir = Path(cfg["paths"]["concepts"])
+        cx_sig = _concepts_fingerprint(concepts_dir)
+        etag, last_mod = _kb_etag(meta_dir, f"taxonomy:{lang}:{tx_sig}:{cx_sig}")
+        if etag and _if_none_match_hits(request.headers.get("If-None-Match"), etag):
+            return _not_modified(etag, last_mod)
         categories = build_taxonomy(base, lang)
-        return jsonify({"categories": categories})
+        resp = jsonify({"categories": categories})
+        return _apply_kb_cache_headers(resp, etag, last_mod)
 
     @app.route("/api/collections")
     def api_collections():
@@ -264,9 +370,57 @@ def create_web_app(base_dir: Path | None = None):
     def api_articles():
         cfg = load_config(base)
         concepts_dir = Path(cfg["paths"]["concepts"])
-        arts = []
-        if concepts_dir.exists():
-            for md_file in sorted(concepts_dir.glob("*.md")):
+        meta_dir = Path(cfg["paths"]["meta"])
+
+        limit_raw = request.args.get("limit")
+        cursor = request.args.get("cursor")
+        tag = request.args.get("tag")
+        q = request.args.get("q")
+        fields_raw = request.args.get("fields")
+        new_mode = any(v is not None for v in (limit_raw, cursor, tag, q, fields_raw))
+
+        # Validate query params BEFORE evaluating conditional cache — a bad
+        # request must surface as 400 even if its ETag happens to match.
+        limit = None
+        if limit_raw is not None:
+            try:
+                limit = int(limit_raw)
+            except (TypeError, ValueError):
+                return jsonify({"status": "error", "message": "limit must be int"}), 400
+            if limit < 1 or limit > 1000:
+                return jsonify({"status": "error", "message": "limit must be 1..1000"}), 400
+
+        # ETag derived from concepts/*.md directly (not index.json) — articles
+        # are served from disk, so direct edits between rebuilds must invalidate
+        # the cache. Signature mixes slug + mtime + size for each file, catching
+        # renames and same-size edits that share an mtime profile. stat() is
+        # microseconds; for 12k files this is well under 100ms.
+        all_md = sorted(concepts_dir.glob("*.md")) if concepts_dir.exists() else []
+        total = len(all_md)
+        max_mtime = 0.0
+        sig_hash = hashlib.md5()
+        for p in all_md:
+            try:
+                st = p.stat()
+            except OSError:
+                continue
+            if st.st_mtime > max_mtime:
+                max_mtime = st.st_mtime
+            sig_hash.update(f"{p.name}:{st.st_mtime}:{st.st_size}\n".encode())
+        etag_extra = request.query_string.decode("utf-8", errors="replace")
+        sig_hash.update(f"|q={etag_extra}".encode())
+        etag = f'W/"{sig_hash.hexdigest()[:16]}"' if all_md else None
+        last_mod = formatdate(max_mtime, usegmt=True) if max_mtime else None
+        if etag and _if_none_match_hits(request.headers.get("If-None-Match"), etag):
+            return _not_modified(etag, last_mod)
+
+        fields = None
+        if fields_raw:
+            fields = {f.strip() for f in fields_raw.split(",") if f.strip()}
+
+        if not new_mode:
+            arts = []
+            for md_file in all_md:
                 post = frontmatter.load(str(md_file))
                 arts.append({
                     "slug": md_file.stem,
@@ -274,7 +428,87 @@ def create_web_app(base_dir: Path | None = None):
                     "summary": post.metadata.get("summary", ""),
                     "tags": post.metadata.get("tags", []),
                 })
-        return jsonify({"articles": arts})
+            resp = jsonify({"articles": arts})
+            return _apply_kb_cache_headers(resp, etag, last_mod)
+
+        candidates = all_md
+        if cursor:
+            candidates = [p for p in candidates if p.stem > cursor]
+
+        # Collect limit+1 to detect whether a next page exists; this avoids
+        # emitting a phantom next_cursor when the last page lands exactly on
+        # `limit` (which would force clients into an empty extra fetch).
+        cap = (limit + 1) if limit is not None else None
+        collected: list[tuple[Path, frontmatter.Post]] = []
+        for p in candidates:
+            post = frontmatter.load(str(p))
+            if tag:
+                if tag not in _normalize_tags(post.metadata.get("tags")):
+                    continue
+            if q:
+                blob = (
+                    str(post.metadata.get("title", "")) + " "
+                    + str(post.metadata.get("summary", ""))
+                ).lower()
+                if q.lower() not in blob:
+                    continue
+            collected.append((p, post))
+            if cap is not None and len(collected) >= cap:
+                break
+
+        has_more = limit is not None and len(collected) > limit
+        if has_more:
+            collected = collected[:limit]
+
+        articles = []
+        for p, post in collected:
+            entry = {
+                "slug": p.stem,
+                "title": post.metadata.get("title", p.stem),
+                "summary": post.metadata.get("summary", ""),
+                "tags": post.metadata.get("tags", []),
+            }
+            if fields:
+                entry = {k: v for k, v in entry.items() if k in fields}
+            articles.append(entry)
+
+        next_cursor = collected[-1][0].stem if has_more else None
+
+        resp = jsonify({
+            "articles": articles,
+            "total": total,
+            "count": len(articles),
+            "next_cursor": next_cursor,
+            "filters": {"tag": tag, "q": q},
+        })
+        return _apply_kb_cache_headers(resp, etag, last_mod)
+
+    @app.route("/api/articles/lite")
+    def api_articles_lite():
+        """Slim {slug, title} list backed by index.json — 1 file read, no frontmatter parse."""
+        cfg = load_config(base)
+        meta_dir = Path(cfg["paths"]["meta"])
+        idx_path = meta_dir / "index.json"
+
+        etag, last_mod = _kb_etag(meta_dir, "lite")
+        if etag and _if_none_match_hits(request.headers.get("If-None-Match"), etag):
+            return _not_modified(etag, last_mod)
+
+        if not idx_path.exists():
+            resp = jsonify({"articles": [], "total": 0})
+            return _apply_kb_cache_headers(resp, etag, last_mod)
+        try:
+            idx = json.loads(idx_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return jsonify({"articles": [], "total": 0}), 500
+        if not isinstance(idx, list):
+            return jsonify({"articles": [], "total": 0}), 500
+        lite = [
+            {"slug": e.get("slug", ""), "title": e.get("title", e.get("slug", ""))}
+            for e in idx if isinstance(e, dict)
+        ]
+        resp = jsonify({"articles": lite, "total": len(lite)})
+        return _apply_kb_cache_headers(resp, etag, last_mod)
 
     @app.route("/api/articles/<path:slug>")
     def api_article(slug):
