@@ -116,6 +116,7 @@ def _op_ask(
     file_back: bool = False,
     deep: bool = True,
     promote: bool = False,
+    model: str | None = None,
 ) -> dict:
     from .query import query, query_with_search
     if deep:
@@ -126,11 +127,18 @@ def _op_ask(
             file_back=file_back,
             return_context=True,
             promote=promote,
+            model=model,
         )
         if isinstance(result, dict):
             return result
         return {"answer": result}
-    answer = query(question, file_back=file_back, base_dir=base_dir, tone=tone)
+    answer = query(
+        question,
+        file_back=file_back,
+        base_dir=base_dir,
+        tone=tone,
+        model=model,
+    )
     return {"answer": answer}
 
 
@@ -354,6 +362,7 @@ _CANONICAL: list[Operation] = [
                 "file_back": {"type": "boolean", "default": False},
                 "deep": {"type": "boolean", "default": True},
                 "promote": {"type": "boolean", "default": False},
+                "model": {"type": "string"},
             },
             "required": ["question"],
         },

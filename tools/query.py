@@ -81,12 +81,16 @@ def query(
     base_dir: Path | None = None,
     tone: str = "default",
     return_path: bool = False,
+    model: str | None = None,
 ) -> str | dict:
     """Ask a question against the wiki and return the answer.
 
     By default returns the answer string. When ``return_path=True`` returns
     a dict ``{"answer": str, "output_path": str | None}`` — useful for API
     callers that want to expose the filed-back output location to clients.
+
+    *model* overrides the default LLM for this call only (no env mutation,
+    no client re-init). ``None`` falls back to ``LLMBASE_MODEL``.
     """
     cfg = load_config(base_dir)
     ensure_dirs(cfg)
@@ -110,6 +114,7 @@ def query(
         question,
         context_files,
         system=system,
+        model=model,
         max_tokens=cfg["llm"]["max_tokens"],
     )
 
@@ -128,6 +133,7 @@ def query_with_search(
     file_back: bool = False,
     return_context: bool = False,
     promote: bool = False,
+    model: str | None = None,
 ) -> str | dict:
     """Multi-step query: first search for relevant articles, then answer.
 
@@ -138,6 +144,11 @@ def query_with_search(
     should be promoted into a new (or extended) wiki concept. The
     resulting promotion info is added as "promotion" in the return dict.
     Requires return_context=True to take effect.
+
+    *model* overrides the default LLM for both the article-selector call
+    and the answer call. Promote-judge intentionally still uses the
+    default model, since its job is meta-evaluation and should be
+    insulated from per-query model whims.
     """
     cfg = load_config(base_dir)
     ensure_dirs(cfg)
@@ -183,7 +194,7 @@ And this question: {question}
 
 Which articles (by title) are most relevant? List up to 10, one per line, just the titles."""
 
-    relevant_titles = chat(search_prompt, max_tokens=1024)
+    relevant_titles = chat(search_prompt, model=model, max_tokens=1024)
 
     # Step 2: Load those articles
     concepts_dir = Path(cfg["paths"]["concepts"])
@@ -212,6 +223,7 @@ Which articles (by title) are most relevant? List up to 10, one per line, just t
         question,
         context_files,
         system=system,
+        model=model,
         max_tokens=cfg["llm"]["max_tokens"],
     )
 

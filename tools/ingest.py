@@ -13,6 +13,7 @@ from bs4 import BeautifulSoup
 from markdownify import markdownify as md
 
 from .config import load_config, ensure_dirs
+from .llm import strip_surrogates
 
 
 def _validate_url(url: str):
@@ -112,9 +113,11 @@ def ingest_url(url: str, base_dir: Path | None = None) -> Path:
     finally:
         sys.setrecursionlimit(old_limit)
 
-    # Create frontmatter
-    post = frontmatter.Post(content)
-    post.metadata["title"] = title
+    # Sanitize lone surrogates from upstream HTML decode before they
+    # reach disk — otherwise they sit in raw/ until a downstream LLM
+    # call serialises them and crashes (see strip_surrogates docstring).
+    post = frontmatter.Post(strip_surrogates(content))
+    post.metadata["title"] = strip_surrogates(title)
     post.metadata["source"] = url
     post.metadata["ingested_at"] = datetime.now(timezone.utc).isoformat()
     post.metadata["type"] = "web_article"
@@ -155,6 +158,10 @@ def ingest_file(file_path: str, base_dir: Path | None = None) -> Path:
             post.metadata["ingested_at"] = datetime.now(timezone.utc).isoformat()
         post.metadata["type"] = "local_file"
         post.metadata["compiled"] = False
+        # Sanitize before persistence — same reasoning as ingest_url.
+        post.content = strip_surrogates(post.content)
+        if isinstance(post.metadata.get("title"), str):
+            post.metadata["title"] = strip_surrogates(post.metadata["title"])
         dest.write_text(frontmatter.dumps(post), encoding="utf-8")
     else:
         # Create a companion metadata file

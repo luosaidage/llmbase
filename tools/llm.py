@@ -309,6 +309,25 @@ def chat(
     return ""
 
 
+def strip_surrogates(s: str) -> str:
+    """Drop unpaired UTF-16 surrogates from *s*.
+
+    The OpenAI client serialises payloads with strict UTF-8, which rejects
+    isolated surrogate code points (U+D800–U+DFFF). They sneak in via
+    upstream HTML/PDF ingest where mojibake decode left half a surrogate
+    pair, then sit in concept files until a deep query stitches them into
+    a prompt — at which point the request crashes with::
+
+        'utf-8' codec can't encode character '\\udce7': surrogates not allowed
+
+    Round-tripping through ``utf-8`` with ``errors="replace"`` substitutes
+    each lone surrogate with U+FFFD without touching valid text.
+    """
+    if not isinstance(s, str):
+        return s
+    return s.encode("utf-8", "replace").decode("utf-8", "replace")
+
+
 def chat_with_context(
     question: str,
     context_files: list[dict],
@@ -319,8 +338,11 @@ def chat_with_context(
     """Ask a question with file contents as context."""
     context_parts = []
     for f in context_files:
-        context_parts.append(f"## {f['path']}\n\n{f['content']}")
+        path = strip_surrogates(str(f.get("path", "")))
+        content = strip_surrogates(str(f.get("content", "")))
+        context_parts.append(f"## {path}\n\n{content}")
     context_block = "\n\n---\n\n".join(context_parts)
+    safe_question = strip_surrogates(question)
 
     prompt = f"""Here are the relevant knowledge base articles:
 
@@ -330,6 +352,6 @@ def chat_with_context(
 
 Based on the above context, please answer the following question:
 
-{question}"""
+{safe_question}"""
 
     return chat(prompt, system=system, model=model, max_tokens=max_tokens)

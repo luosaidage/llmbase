@@ -731,12 +731,23 @@ def create_web_app(base_dir: Path | None = None):
 
     @app.route("/api/ask", methods=["POST"])
     def api_ask():
-        data = request.json
+        data = request.json or {}
         q = data.get("question", "")
         deep = data.get("deep", False)
         file_back = data.get("file_back", True)
         tone = data.get("tone", "default")
         promote = data.get("promote", False)
+        # Per-request model override: empty/None falls back to LLMBASE_MODEL.
+        # Reject non-string / oversized to keep the param plumbing tight.
+        raw_model = data.get("model")
+        model: str | None = None
+        if raw_model is not None:
+            if not isinstance(raw_model, str):
+                return jsonify({"status": "error", "message": "model must be a string"}), 400
+            raw_model = raw_model.strip()
+            if len(raw_model) > 200:
+                return jsonify({"status": "error", "message": "model too long"}), 400
+            model = raw_model or None
         # promote=True is a write operation (writes to wiki/concepts +
         # rebuilds index). When API_SECRET is configured, require auth for
         # promotion specifically; reading the wiki stays open.
@@ -755,14 +766,17 @@ def create_web_app(base_dir: Path | None = None):
             # Route through operations.dispatch so promote=True acquires the
             # shared job_lock (same behavior as MCP / CLI / agent-HTTP).
             from . import operations as _ops
+            ask_args = {
+                "question": q,
+                "tone": tone,
+                "file_back": file_back,
+                "deep": True,
+                "promote": promote,
+            }
+            if model is not None:
+                ask_args["model"] = model
             try:
-                result = _ops.dispatch("kb_ask", base, {
-                    "question": q,
-                    "tone": tone,
-                    "file_back": file_back,
-                    "deep": True,
-                    "promote": promote,
-                })
+                result = _ops.dispatch("kb_ask", base, ask_args)
             except RuntimeError as e:
                 return jsonify({"status": "busy", "error": str(e)}), 409
             payload = {
@@ -775,7 +789,14 @@ def create_web_app(base_dir: Path | None = None):
                 payload["promotion"] = result["promotion"]
             return jsonify(payload)
         else:
-            result = query(q, file_back=file_back, base_dir=base, tone=tone, return_path=True)
+            result = query(
+                q,
+                file_back=file_back,
+                base_dir=base,
+                tone=tone,
+                return_path=True,
+                model=model,
+            )
             payload = {"answer": result["answer"]}
             if result.get("output_path"):
                 payload["output_path"] = result["output_path"]
