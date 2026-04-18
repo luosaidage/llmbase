@@ -138,13 +138,33 @@ _ENV_SOURCE = _load_env()
 _client = None
 
 
+def _get_float_env(name: str, default: float) -> float:
+    """Read *name* as a positive float, logging and falling back on bad input."""
+    raw = os.getenv(name, "")
+    if not raw:
+        return default
+    try:
+        val = float(raw)
+        if val <= 0:
+            raise ValueError("must be > 0")
+        return val
+    except ValueError:
+        logger.warning(f"Invalid {name}={raw!r}, using default {default}")
+        return default
+
+
 def get_client() -> OpenAI:
     global _client
     if _client is None:
+        # HTTP timeouts — overridable via env for local Ollama / slow GPUs
+        # where the 300 s default isn't enough (issue #6). CONNECT covers
+        # the initial TCP/TLS handshake; READ covers per-call wall time.
+        read_timeout = _get_float_env("LLMBASE_HTTP_TIMEOUT", 300.0)
+        connect_timeout = _get_float_env("LLMBASE_HTTP_CONNECT_TIMEOUT", 30.0)
         _client = OpenAI(
             api_key=os.getenv("LLMBASE_API_KEY") or os.getenv("OPENAI_API_KEY"),
             base_url=os.getenv("LLMBASE_BASE_URL") or os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
-            timeout=httpx.Timeout(300.0, connect=30.0),
+            timeout=httpx.Timeout(read_timeout, connect=connect_timeout),
             max_retries=2,
         )
     return _client
@@ -310,7 +330,7 @@ def chat(
 
 
 def strip_surrogates(s: str) -> str:
-    """Drop unpaired UTF-16 surrogates from *s*.
+    """Replace lone UTF-16 surrogates in *s* with ``?``.
 
     The OpenAI client serialises payloads with strict UTF-8, which rejects
     isolated surrogate code points (U+D800–U+DFFF). They sneak in via
@@ -320,8 +340,9 @@ def strip_surrogates(s: str) -> str:
 
         'utf-8' codec can't encode character '\\udce7': surrogates not allowed
 
-    Round-tripping through ``utf-8`` with ``errors="replace"`` substitutes
-    each lone surrogate with U+FFFD without touching valid text.
+    Implementation: ``encode("utf-8", "replace")`` emits ``b"?"`` (0x3F)
+    for each lone surrogate — not U+FFFD — and the subsequent decode is a
+    no-op on those ASCII bytes. Valid text round-trips unchanged.
     """
     if not isinstance(s, str):
         return s

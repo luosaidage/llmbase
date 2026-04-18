@@ -161,6 +161,99 @@ def fix_dirty_tags(base_dir: Path | None = None) -> list[str]:
 
 
 
+def heal_urly_slugs(base_dir: Path | None = None) -> list[str]:
+    """Rename concept files whose slug is a URL fragment (issue #5).
+
+    Pre-0.6.7 the broken-link stub fixer passed raw wiki-link targets
+    through as filenames, so targets like ``[[reasons-just-vs-expl/?ref=…]]``
+    became literal files under ``concepts/reasons-just-vs-expl/?ref=….md``.
+    This function detects surviving dirty slugs, renames them to a
+    sanitized stem, and rewrites any ``[[...]]`` references in other
+    articles to point at the new slug. Conflicts (sanitized name already
+    taken) are skipped with a warning so nothing is overwritten.
+    """
+    cfg = load_config(base_dir)
+    ensure_dirs(cfg)
+    concepts_dir = Path(cfg["paths"]["concepts"])
+
+    from ..compile import sanitize_slug, rebuild_index
+
+    # Walk files as well as directories: the broken writer may have
+    # produced real subdirectories when the slug contained '/'.
+    dirty: list[tuple[str, Path]] = []
+    for md_file in concepts_dir.rglob("*.md"):
+        if not md_file.is_file():
+            continue
+        try:
+            rel = md_file.relative_to(concepts_dir)
+        except ValueError:
+            continue
+        # Force forward-slash separators so the rename_map keys match
+        # wikilink targets (which are always '/'-separated) on Windows too.
+        raw_stem = rel.with_suffix("").as_posix()  # e.g. "foo/?ref=bar"
+        if raw_stem == sanitize_slug(raw_stem):
+            continue
+        dirty.append((raw_stem, md_file))
+
+    if not dirty:
+        return []
+
+    fixes: list[str] = []
+    existing = {p.stem for p in concepts_dir.glob("*.md")}
+    rename_map: dict[str, str] = {}
+
+    for raw_stem, md_file in dirty:
+        clean = sanitize_slug(raw_stem)
+        if not clean:
+            fixes.append(f"Skipped unsalvageable slug: {raw_stem!r}")
+            continue
+        if clean in existing:
+            fixes.append(
+                f"Skipped {raw_stem!r}: sanitized slug {clean!r} already taken"
+            )
+            continue
+        new_path = concepts_dir / f"{clean}.md"
+        # Update frontmatter slug if present
+        try:
+            post = frontmatter.load(str(md_file))
+            if post.metadata.get("slug"):
+                post.metadata["slug"] = clean
+                md_file.write_text(frontmatter.dumps(post), encoding="utf-8")
+        except Exception:
+            pass
+        md_file.rename(new_path)
+        existing.add(clean)
+        rename_map[raw_stem] = clean
+        # Try removing the now-empty parent directory if the slug
+        # contained '/' and left us with concepts/foo/?…md renamed away.
+        try:
+            parent = md_file.parent
+            if parent != concepts_dir and not any(parent.iterdir()):
+                parent.rmdir()
+        except OSError:
+            pass
+        fixes.append(f"Renamed dirty slug: {raw_stem!r} → {clean}")
+
+    # Rewrite wikilinks in surviving articles so backlinks still resolve.
+    if rename_map:
+        link_pattern = re.compile(r"\[\[([^\]|]+)(\|[^\]]+)?\]\]")
+        for md_file in concepts_dir.glob("*.md"):
+            text = md_file.read_text()
+            def _sub(m: re.Match) -> str:
+                target = m.group(1).strip()
+                pipe = m.group(2) or ""
+                if target in rename_map:
+                    return f"[[{rename_map[target]}{pipe}]]"
+                return m.group(0)
+            new_text = link_pattern.sub(_sub, text)
+            if new_text != text:
+                md_file.write_text(new_text, encoding="utf-8")
+
+        rebuild_index(base_dir)
+
+    return fixes
+
+
 def clean_garbage(base_dir: Path | None = None) -> list[str]:
     """Remove garbage/empty stub articles detected by check_stubs.
 
@@ -229,6 +322,8 @@ def fix_broken_links(base_dir: Path | None = None, max_stubs: int = 10) -> list[
     # target_slug -> [(source_slug, context_snippet)]
     missing: dict[str, list[tuple[str, str]]] = {}
 
+    from ..compile import sanitize_slug
+
     for md_file in concepts_dir.glob("*.md"):
         content = md_file.read_text()
         for match in link_pattern.finditer(content):
@@ -241,7 +336,12 @@ def fix_broken_links(base_dir: Path | None = None, max_stubs: int = 10) -> list[
             simple = raw_target.lower().replace(" ", "-")
             if simple in existing_slugs:
                 continue
-            target_slug = simple
+            # Sanitize before using as a filename stem (issue #5): wiki-link
+            # targets occasionally carry URL fragments like '?ref=…' that
+            # must not reach the filesystem verbatim.
+            target_slug = sanitize_slug(simple)
+            if not target_slug:
+                continue
             # Extract context around the link (200 chars each side)
             start = max(0, match.start() - 200)
             end = min(len(content), match.end() + 200)
@@ -359,6 +459,11 @@ def auto_fix(base_dir: Path | None = None) -> list[str]:
     ensure_dirs(cfg)
     concepts_dir = Path(cfg["paths"]["concepts"])
     fixes = []
+
+    # 0. Heal URL-shaped slugs before anything else — they crash downstream
+    # file I/O (e.g. heal's own metadata pass) with FileNotFoundError.
+    urly = heal_urly_slugs(base_dir)
+    fixes.extend(urly)
 
     # 1. Clean garbage first
     garbage = clean_garbage(base_dir)

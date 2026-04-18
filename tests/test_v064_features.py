@@ -240,4 +240,204 @@ def test_ingest_url_sanitizes_content(tmp_kb, monkeypatch):
 
     path = _ing.ingest_url("https://example.com/x", base_dir=tmp_kb)
     text = path.read_text(encoding="utf-8")
-    assert "\udce7" not in text  # sanitized to U+FFFD
+    assert "\udce7" not in text  # sanitized
+
+
+def test_ingest_file_sanitizes_content(tmp_kb, monkeypatch):
+    """ingest_file must strip surrogates from content + title before persisting.
+
+    Real-world entry path: upstream mojibake leaves a lone surrogate in
+    the Post returned by frontmatter.load. The file is readable (no
+    surrogate bytes on disk yet) but the in-memory content carries it,
+    and re-serialising via frontmatter.dumps + write_text would crash
+    or propagate the surrogate downstream.
+    """
+    from tools import ingest as _ing
+    import frontmatter
+
+    src = tmp_kb / "src.md"
+    src.write_text("---\ntitle: Clean\n---\n\nclean body\n", encoding="utf-8")
+
+    # Inject a surrogate into the Post after frontmatter.load returns, as
+    # if the upstream decoder had produced one.
+    real_load = frontmatter.load
+
+    def poisoned_load(path, *a, **kw):
+        post = real_load(path, *a, **kw)
+        post.content = "body\udce7poison"
+        post.metadata["title"] = "dirty\udce7title"
+        return post
+
+    monkeypatch.setattr(_ing.frontmatter, "load", poisoned_load)
+
+    path = _ing.ingest_file(str(src), base_dir=tmp_kb)
+    text = path.read_text(encoding="utf-8")
+    assert "\udce7" not in text
+    text.encode("utf-8")  # must not raise
+
+
+# ─── v0.6.7: model override auth + allowlist ──────────────────────
+
+
+def test_api_ask_model_override_blocked_when_api_secret_set(tmp_kb, monkeypatch):
+    """With API_SECRET set, unauthenticated `model` override returns 401."""
+    monkeypatch.setenv("LLMBASE_API_SECRET", "secret-abc")
+    c = _client(tmp_kb)
+    r = c.post("/api/ask", json={"question": "hi", "deep": False, "model": "alpha"})
+    assert r.status_code == 401
+
+
+def test_api_ask_model_override_allowed_when_authed(tmp_kb, monkeypatch):
+    monkeypatch.setenv("LLMBASE_API_SECRET", "secret-abc")
+    captured = {}
+
+    def fake_query(q, file_back=False, base_dir=None, tone="default",
+                   return_path=False, model=None):
+        captured["model"] = model
+        return {"answer": "x", "output_path": None}
+
+    with patch("tools.web.query", side_effect=fake_query):
+        c = _client(tmp_kb)
+        r = c.post(
+            "/api/ask",
+            json={"question": "hi", "deep": False, "model": "alpha"},
+            headers={"Authorization": "Bearer secret-abc"},
+        )
+    assert r.status_code == 200
+    assert captured["model"] == "alpha"
+
+
+def test_api_ask_model_override_rejects_spa_cookie(tmp_kb, monkeypatch):
+    """SPA-minted session cookie must NOT unlock model override (codex finding).
+
+    /api/ask promote=True still accepts the cookie for SPA convenience, but
+    the model-override path — which has cost implications — requires the
+    raw API secret in an Authorization header so a drive-by browser visitor
+    cannot pin an expensive model just by loading `/`.
+    """
+    monkeypatch.setenv("LLMBASE_API_SECRET", "secret-abc")
+    from tools.web import derive_session_token
+    session = derive_session_token("secret-abc")
+    c = _client(tmp_kb)
+    c.set_cookie(domain="localhost", key="llmbase_auth", value=session)
+    r = c.post("/api/ask", json={"question": "hi", "deep": False, "model": "alpha"})
+    assert r.status_code == 401
+    assert "Authorization" in r.get_json()["message"]
+
+
+def test_api_ask_promote_still_accepts_cookie(tmp_kb, monkeypatch):
+    """Regression guard: promote=True must still accept SPA cookie auth."""
+    monkeypatch.setenv("LLMBASE_API_SECRET", "secret-abc")
+    from tools.web import derive_session_token
+    session = derive_session_token("secret-abc")
+
+    def fake_dispatch(name, base, args):
+        return {"answer": "x", "consulted": []}
+
+    from tools import operations as _ops
+    with patch.object(_ops, "dispatch", side_effect=fake_dispatch):
+        c = _client(tmp_kb)
+        c.set_cookie(domain="localhost", key="llmbase_auth", value=session)
+        r = c.post("/api/ask", json={"question": "hi", "deep": True, "promote": True})
+    assert r.status_code == 200
+
+
+def test_api_ask_model_allowlist_rejects_unlisted(tmp_kb, monkeypatch):
+    monkeypatch.setenv("LLMBASE_MODEL_ALLOWLIST", "gpt-4o-mini,gpt-4o")
+    c = _client(tmp_kb)
+    r = c.post("/api/ask", json={"question": "hi", "deep": False, "model": "expensive-o5"})
+    assert r.status_code == 400
+
+
+def test_api_ask_model_allowlist_accepts_listed(tmp_kb, monkeypatch):
+    monkeypatch.setenv("LLMBASE_MODEL_ALLOWLIST", "gpt-4o-mini,gpt-4o")
+    captured = {}
+
+    def fake_query(q, file_back=False, base_dir=None, tone="default",
+                   return_path=False, model=None):
+        captured["model"] = model
+        return {"answer": "x", "output_path": None}
+
+    with patch("tools.web.query", side_effect=fake_query):
+        c = _client(tmp_kb)
+        r = c.post("/api/ask", json={"question": "hi", "deep": False, "model": "gpt-4o-mini"})
+    assert r.status_code == 200
+    assert captured["model"] == "gpt-4o-mini"
+
+
+# ─── v0.6.7: slug sanitize + heal ─────────────────────────────────
+
+
+def test_sanitize_slug_strips_url_punctuation():
+    from tools.compile import sanitize_slug
+    assert sanitize_slug("reasons-just-vs-expl/?ref=josephnoelwalker.com") == \
+        "reasons-just-vs-expl-ref=josephnoelwalker.com"
+    assert sanitize_slug("foo bar baz") == "foo-bar-baz"
+    assert sanitize_slug("  ..  ") == ""
+    assert sanitize_slug("a:b#c&d") == "a-b-c-d"
+
+
+def test_heal_urly_slugs_renames_dirty_files(tmp_kb):
+    """heal_urly_slugs must relocate concepts whose stem carries URL chars."""
+    import frontmatter
+    concepts_dir = tmp_kb / "wiki" / "concepts"
+    # Simulate the pre-0.6.7 bug: a slug containing '/' produced a subdir.
+    subdir = concepts_dir / "reasons-just-vs-expl"
+    subdir.mkdir()
+    dirty = subdir / "?ref=josephnoelwalker.com.md"
+    dirty.write_text(frontmatter.dumps(frontmatter.Post(
+        "## English\n\nStub.",
+        title="Weird", summary="s", tags=["stub"],
+        created="2026-04-01T00:00:00+00:00", updated="2026-04-01T00:00:00+00:00",
+    )), encoding="utf-8")
+
+    # Another article links to it with the dirty target.
+    hume = concepts_dir / "david-hume.md"
+    hume.write_text(frontmatter.dumps(frontmatter.Post(
+        "See [[reasons-just-vs-expl/?ref=josephnoelwalker.com]].",
+        title="Hume", summary="s", tags=[],
+        created="2026-04-01T00:00:00+00:00", updated="2026-04-01T00:00:00+00:00",
+    )), encoding="utf-8")
+
+    from tools.lint.fixes import heal_urly_slugs
+    # Stub rebuild_index to skip taxonomy/backlinks regen — we only care
+    # about file renames and wikilink rewrites in this test.
+    with patch("tools.compile.rebuild_index", lambda base_dir=None: []):
+        fixes = heal_urly_slugs(tmp_kb)
+
+    assert any("Renamed" in f for f in fixes)
+    # Dirty path gone, clean path exists
+    assert not dirty.exists()
+    clean_slugs = {p.stem for p in concepts_dir.glob("*.md")}
+    assert any("reasons-just-vs-expl" in s for s in clean_slugs)
+    # Wikilink rewritten
+    assert "reasons-just-vs-expl/?ref=" not in hume.read_text()
+
+
+# ─── v0.6.7: HTTP timeout env override ────────────────────────────
+
+
+def test_http_timeout_env_overrides_default(monkeypatch):
+    """LLMBASE_HTTP_TIMEOUT must flow into the OpenAI client's httpx timeout."""
+    import tools.llm as _llm
+    monkeypatch.setattr(_llm, "_client", None)
+    monkeypatch.setenv("LLMBASE_HTTP_TIMEOUT", "900")
+    monkeypatch.setenv("LLMBASE_HTTP_CONNECT_TIMEOUT", "15")
+    monkeypatch.setenv("LLMBASE_API_KEY", "sk-test")
+
+    client = _llm.get_client()
+    # httpx.Timeout stores read + connect as attributes
+    assert client.timeout.read == 900.0
+    assert client.timeout.connect == 15.0
+    # Reset cached client so subsequent tests pick up env changes freely
+    _llm._client = None
+
+
+def test_http_timeout_env_invalid_falls_back(monkeypatch):
+    import tools.llm as _llm
+    monkeypatch.setattr(_llm, "_client", None)
+    monkeypatch.setenv("LLMBASE_HTTP_TIMEOUT", "not-a-number")
+    monkeypatch.setenv("LLMBASE_API_KEY", "sk-test")
+    client = _llm.get_client()
+    assert client.timeout.read == 300.0
+    _llm._client = None

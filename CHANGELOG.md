@@ -2,6 +2,21 @@
 
 All notable changes to LLMBase (llmwiki) will be documented in this file.
 
+## [0.6.7] — 2026-04-18
+
+### Fixed
+- **`/api/ask` model override now requires the raw API secret when `LLMBASE_API_SECRET` is set.** v0.6.6 introduced a per-request `model` field on `/api/ask`, but left it open on public deployments so an untrusted caller could pin the most expensive model the backing API key can reach. When a secret is configured (prod signal), model override now returns 401 without `Authorization: Bearer <API_SECRET>`. Unlike `promote=True` — which still accepts the SPA-minted session cookie for browser convenience — model override refuses cookie auth, because the SPA cookie is handed out to anyone who loads `/` and provides no real barrier against a drive-by visitor pinning an expensive model. Local/dev mode (no secret) is unchanged.
+- **URL-shaped slugs no longer corrupt the wiki namespace (issue #5).** `lint heal`'s broken-link stub fixer passed raw wiki-link targets through as filenames, so a target like `[[reasons-just-vs-expl/?ref=…]]` produced `concepts/reasons-just-vs-expl/?ref=….md` — a literal subdirectory that later crashed `lint heal` with `FileNotFoundError`. Slug sanitization is now centralised in `tools.compile.sanitize_slug()` and applied consistently across `_write_article` and `fix_broken_links`. A new `heal_urly_slugs` pass runs first in the `auto_fix` pipeline to rename surviving dirty files, rewrite wikilink references, and rebuild the index.
+- **Surrogate sanitizer now reaches the deep-search selector prompt.** v0.6.6 applied `strip_surrogates` inside `chat_with_context`, but the earlier `query_with_search` selector call built its prompt directly from `index.json` titles/summaries and still crashed when those carried lone surrogates from pre-0.6.6 ingests.
+- **`strip_surrogates` docstring corrected** — it substitutes `?` (0x3F), not U+FFFD; the docstring claimed the latter.
+
+### Added
+- **`LLMBASE_HTTP_TIMEOUT` / `LLMBASE_HTTP_CONNECT_TIMEOUT` env vars (issue #6).** The OpenAI client's HTTP read/connect timeouts were hard-coded at 300s/30s. Local Ollama users on large models (gpt-oss:20b with long context) routinely exceed 300s per call; there was no way to extend it without patching source. Both are now env-overridable with the former defaults.
+- **`LLMBASE_MODEL_ALLOWLIST` env var.** Comma-separated allowlist for the `/api/ask` model override — applies to both authed and unauthed callers, gating which models may be selected at all. Complements the auth gate above.
+- **`llmbase -v / -vv / -vvv` (issue #6).** CLI now accepts a top-level verbosity flag that configures logging for `llmbase.*`, `httpx`, and `openai`. `-v` enables INFO on llmbase internals, `-vv` adds INFO for HTTP clients (see requests land), `-vvv` enables wire-level DEBUG. Addresses "compile silently hangs / fails" debugging friction.
+- **`tools.lint.fixes.heal_urly_slugs`** — public function; callable directly or via `auto_fix`.
+- **`tools.compile.sanitize_slug`** — public helper for anyone building concepts outside the main compile path.
+
 ## [0.6.0] — 2026-04-14
 
 ### Added

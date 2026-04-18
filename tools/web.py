@@ -748,20 +748,43 @@ def create_web_app(base_dir: Path | None = None):
             if len(raw_model) > 200:
                 return jsonify({"status": "error", "message": "model too long"}), 400
             model = raw_model or None
-        # promote=True is a write operation (writes to wiki/concepts +
-        # rebuilds index). When API_SECRET is configured, require auth for
-        # promotion specifically; reading the wiki stays open.
-        if promote and API_SECRET:
-            auth = request.headers.get("Authorization", "").replace("Bearer ", "")
-            cookie = request.cookies.get("llmbase_auth", "")
-            if not (
-                hmac.compare_digest(auth, API_SECRET)
-                or hmac.compare_digest(cookie, SESSION_TOKEN)
-            ):
-                return jsonify({
-                    "status": "error",
-                    "message": "promote=true requires authentication",
-                }), 401
+        # Model override is a cost-impacting lever on public deployments —
+        # untrusted callers could pin the most expensive model available to
+        # the backing API key. When API_SECRET is set (prod signal), require
+        # auth for model override the same way promote=True does. An
+        # optional LLMBASE_MODEL_ALLOWLIST (comma-separated) gates which
+        # models any caller — authed or not — may select.
+        if model is not None:
+            allowlist_raw = os.getenv("LLMBASE_MODEL_ALLOWLIST", "").strip()
+            if allowlist_raw:
+                allowed = {m.strip() for m in allowlist_raw.split(",") if m.strip()}
+                if model not in allowed:
+                    return jsonify({
+                        "status": "error",
+                        "message": f"model '{model}' not in LLMBASE_MODEL_ALLOWLIST",
+                    }), 400
+        auth_header = request.headers.get("Authorization", "").replace("Bearer ", "")
+        auth_cookie = request.cookies.get("llmbase_auth", "")
+        # Two auth levels: the SPA-convenience cookie (minted for anyone who
+        # loads `/`) is accepted for promote — the existing UI relies on it.
+        # Model override, which is a cost lever on public deployments, demands
+        # the raw API secret via the Authorization header so a drive-by
+        # browser visitor cannot pin an expensive model. See CHANGELOG.
+        authed_cookie = bool(API_SECRET) and (
+            hmac.compare_digest(auth_header, API_SECRET)
+            or hmac.compare_digest(auth_cookie, SESSION_TOKEN)
+        )
+        authed_strong = bool(API_SECRET) and hmac.compare_digest(auth_header, API_SECRET)
+        if promote and API_SECRET and not authed_cookie:
+            return jsonify({
+                "status": "error",
+                "message": "promote=true requires authentication",
+            }), 401
+        if model is not None and API_SECRET and not authed_strong:
+            return jsonify({
+                "status": "error",
+                "message": "model override requires Authorization: Bearer <API_SECRET>",
+            }), 401
         if deep:
             # Route through operations.dispatch so promote=True acquires the
             # shared job_lock (same behavior as MCP / CLI / agent-HTTP).

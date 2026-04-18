@@ -1,9 +1,11 @@
 """Main CLI entry point for LLMBase."""
 
+import logging
 from pathlib import Path
 
 import click
 from rich.console import Console
+from rich.logging import RichHandler
 from rich.table import Table
 from rich.panel import Panel
 from rich.markdown import Markdown
@@ -13,13 +15,45 @@ from .config import load_config, ensure_dirs
 console = Console()
 
 
+def _configure_verbose_logging(verbosity: int):
+    """Surface upstream logs so slow/failed LLM calls stop being silent.
+
+    Level map:
+      -v   → INFO on llmbase.*  (ingest/compile milestones, env loading)
+      -vv  → DEBUG on llmbase.*, INFO on httpx/openai (request lines)
+      -vvv → DEBUG everywhere (wire-level HTTP via httpx)
+    """
+    if verbosity <= 0:
+        return
+    llmbase_level = logging.INFO if verbosity == 1 else logging.DEBUG
+    http_level = logging.WARNING if verbosity == 1 else (
+        logging.INFO if verbosity == 2 else logging.DEBUG
+    )
+    # Install a Rich handler once so repeated invocations in tests don't
+    # stack handlers.
+    root = logging.getLogger()
+    if not any(isinstance(h, RichHandler) for h in root.handlers):
+        handler = RichHandler(console=console, rich_tracebacks=True,
+                              show_path=False, markup=False)
+        root.addHandler(handler)
+    root.setLevel(min(llmbase_level, http_level))
+    for name in ("llmbase", "tools", "httpx", "httpcore", "openai"):
+        logging.getLogger(name).setLevel(
+            llmbase_level if name in ("llmbase", "tools") else http_level
+        )
+
+
 @click.group()
 @click.option("--base-dir", type=click.Path(exists=True), default=".", help="Project base directory")
+@click.option("-v", "--verbose", count=True,
+              help="Increase log verbosity (-v INFO, -vv DEBUG+http, -vvv wire).")
 @click.pass_context
-def cli(ctx, base_dir):
+def cli(ctx, base_dir, verbose):
     """LLMBase - LLM-powered personal knowledge base."""
     ctx.ensure_object(dict)
     ctx.obj["base_dir"] = Path(base_dir).resolve()
+    ctx.obj["verbose"] = verbose
+    _configure_verbose_logging(verbose)
 
 
 # ─── Ingest commands ───────────────────────────────────────────────

@@ -23,6 +23,7 @@ Example (single-language classical-Chinese KB)::
 """
 
 import json
+import re as _slug_re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -30,6 +31,24 @@ import frontmatter
 
 from .config import load_config, ensure_dirs
 from .llm import chat
+
+
+def sanitize_slug(slug: str) -> str:
+    """Normalize a concept slug to a safe filename stem.
+
+    LLMs occasionally emit URLs verbatim as slugs (issue #5), and the
+    broken-link stub fixer can receive such strings as wikilink targets.
+    Left unsanitized they produce paths like
+    ``concepts/foo/?ref=bar.md`` — legal on POSIX, but corrupt the wiki
+    namespace (wikilink parsers, backlinks.json, and lint heal all assume
+    plain-stem slugs). Collapse URL punctuation and whitespace to ``-``.
+    """
+    if not slug:
+        return ""
+    s = _slug_re.sub(r"[\s/\\?#&:]+", "-", slug)
+    s = s.replace("..", "")
+    s = _slug_re.sub(r"-+", "-", s).strip(".-_ ")
+    return s
 
 
 # Maps a raw doc's `type` field (set by ingest plugins) to the canonical
@@ -508,9 +527,7 @@ def _write_article(article: dict, concepts_dir: Path) -> Path | None:
     import re as _re
     from .resolve import build_aliases, resolve_link
 
-    slug = article["slug"]
-    # Sanitize slug: prevent path traversal and invalid filenames
-    slug = slug.replace("/", "-").replace("\\", "-").replace("..", "").strip(".-_ ")
+    slug = sanitize_slug(article["slug"])
     if not slug:
         return None
     article["slug"] = slug

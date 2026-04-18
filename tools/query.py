@@ -183,14 +183,20 @@ def query_with_search(
     if len(selector_index) > prefilter_threshold:
         selector_index = _bm25_prefilter(question, selector_index, top_k=prefilter_top_k)
 
+    # Sanitize before assembling the selector prompt — existing index.json
+    # entries may carry lone surrogates from pre-0.6.6 ingests. Without this
+    # the selector `chat()` crashes before chat_with_context() ever runs.
+    from .llm import strip_surrogates
     index_summary = "\n".join(
-        f"- {e['title']}: {e['summary']}" for e in selector_index
+        f"- {strip_surrogates(str(e.get('title', '')))}: "
+        f"{strip_surrogates(str(e.get('summary', '')))}"
+        for e in selector_index
     )
 
     search_prompt = f"""Given this wiki index:
 {index_summary}
 
-And this question: {question}
+And this question: {strip_surrogates(question)}
 
 Which articles (by title) are most relevant? List up to 10, one per line, just the titles."""
 
