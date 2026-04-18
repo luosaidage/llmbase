@@ -142,7 +142,19 @@ def _op_ask(
     return {"answer": answer}
 
 
-def _op_get(base_dir: Path, slug: str) -> dict:
+def _safe_concept_path(concepts_dir: Path, slug: str) -> Path | None:
+    """Resolve concepts_dir/{slug}.md, returning None if it escapes concepts_dir.
+
+    Uses Path.is_relative_to (Python 3.9+) — safe against ``..`` traversal AND
+    against the prefix-confusion case where ``concepts`` is a string-prefix of
+    a sibling like ``concepts_evil`` (which ``startswith`` would falsely allow).
+    """
+    concepts_resolved = concepts_dir.resolve()
+    candidate = (concepts_dir / f"{slug}.md").resolve()
+    return candidate if candidate.is_relative_to(concepts_resolved) else None
+
+
+def _op_get(base_dir: Path, slug: str, section: str | None = None) -> dict:
     import frontmatter
     from .config import load_config
     from .resolve import load_aliases, resolve_link
@@ -151,15 +163,57 @@ def _op_get(base_dir: Path, slug: str) -> dict:
     concepts_dir = Path(cfg["paths"]["concepts"])
     meta_dir = Path(cfg["paths"]["meta"])
 
-    article_path = concepts_dir / f"{slug}.md"
+    article_path = _safe_concept_path(concepts_dir, slug)
     resolved = slug
-    if not article_path.exists():
+    if article_path is None or not article_path.exists():
         aliases = load_aliases(meta_dir)
         alt = resolve_link(slug, aliases)
         if alt:
-            resolved = alt
-            article_path = concepts_dir / f"{alt}.md"
-    if not article_path.exists():
+            article_path = _safe_concept_path(concepts_dir, alt)
+            if article_path is not None:
+                resolved = alt
+    if article_path is None or not article_path.exists():
+        return {"found": False, "slug": slug}
+
+    post = frontmatter.load(str(article_path))
+    base_meta = {
+        "found": True,
+        "slug": resolved,
+        "title": post.metadata.get("title", resolved),
+        "summary": post.metadata.get("summary", ""),
+        "tags": post.metadata.get("tags", []),
+        "sources": post.metadata.get("sources", []),
+    }
+    if section:
+        from .sections import extract_section_text, parse_sections
+        sections = parse_sections(post.content)
+        text = extract_section_text(post.content, sections, section)
+        if text is None:
+            return {**base_meta, "section": section, "section_found": False}
+        return {**base_meta, "section": section, "section_found": True, "content": text}
+    return {**base_meta, "content": post.content}
+
+
+def _op_get_sections(base_dir: Path, slug: str) -> dict:
+    import frontmatter
+    from .config import load_config
+    from .resolve import load_aliases, resolve_link
+    from .sections import parse_sections
+
+    cfg = load_config(base_dir)
+    concepts_dir = Path(cfg["paths"]["concepts"])
+    meta_dir = Path(cfg["paths"]["meta"])
+
+    article_path = _safe_concept_path(concepts_dir, slug)
+    resolved = slug
+    if article_path is None or not article_path.exists():
+        aliases = load_aliases(meta_dir)
+        alt = resolve_link(slug, aliases)
+        if alt:
+            article_path = _safe_concept_path(concepts_dir, alt)
+            if article_path is not None:
+                resolved = alt
+    if article_path is None or not article_path.exists():
         return {"found": False, "slug": slug}
 
     post = frontmatter.load(str(article_path))
@@ -167,10 +221,7 @@ def _op_get(base_dir: Path, slug: str) -> dict:
         "found": True,
         "slug": resolved,
         "title": post.metadata.get("title", resolved),
-        "summary": post.metadata.get("summary", ""),
-        "tags": post.metadata.get("tags", []),
-        "sources": post.metadata.get("sources", []),
-        "content": post.content,
+        "sections": parse_sections(post.content),
     }
 
 
@@ -371,8 +422,30 @@ _CANONICAL: list[Operation] = [
     ),
     Operation(
         name="kb_get",
-        description="Get a wiki article by slug (alias-aware: accepts Chinese/pinyin/English names).",
+        description=(
+            "Get a wiki article by slug (alias-aware: accepts Chinese/pinyin/English names). "
+            "Optional `section` param extracts just that section's subtree (heading + content "
+            "+ descendants); use kb_get_sections first to discover anchors."
+        ),
         handler=_op_get,
+        params={
+            "type": "object",
+            "properties": {
+                "slug": {"type": "string"},
+                "section": {"type": "string", "description": "Section anchor from kb_get_sections (e.g. h2-緒論-bb6572)"},
+            },
+            "required": ["slug"],
+        },
+        category="read",
+    ),
+    Operation(
+        name="kb_get_sections",
+        description=(
+            "Get the section tree (table of contents) for an article. Each section has "
+            "level, title, anchor, start/end character offsets, and nested children. "
+            "Anchors are stable across cosmetic title edits and sibling reorders."
+        ),
+        handler=_op_get_sections,
         params={
             "type": "object",
             "properties": {"slug": {"type": "string"}},

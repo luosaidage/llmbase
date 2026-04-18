@@ -510,26 +510,62 @@ def create_web_app(base_dir: Path | None = None):
         resp = jsonify({"articles": lite, "total": len(lite)})
         return _apply_kb_cache_headers(resp, etag, last_mod)
 
+    def _safe_concept(concepts_dir: Path, slug: str) -> Path | None:
+        """Resolve concepts_dir/{slug}.md, returning None if it escapes concepts_dir.
+
+        Uses Path.is_relative_to so prefix-confusion attacks (e.g. concepts vs
+        concepts_evil sharing a string prefix) are rejected, not just `..`.
+        """
+        concepts_resolved = concepts_dir.resolve()
+        candidate = (concepts_dir / f"{slug}.md").resolve()
+        return candidate if candidate.is_relative_to(concepts_resolved) else None
+
+    @app.route("/api/articles/<path:slug>/sections")
+    def api_article_sections(slug):
+        from .resolve import load_aliases, resolve_link
+        from .sections import parse_sections
+        cfg = load_config(base)
+        concepts_dir = Path(cfg["paths"]["concepts"])
+        meta_dir = Path(cfg["paths"]["meta"])
+        article_path = _safe_concept(concepts_dir, slug)
+        if article_path is None:
+            return jsonify({"status": "error", "message": "Invalid slug"}), 400
+        if not article_path.exists():
+            aliases = load_aliases(meta_dir)
+            resolved = resolve_link(slug, aliases)
+            if resolved:
+                article_path = _safe_concept(concepts_dir, resolved)
+                if article_path is None:
+                    return jsonify({"status": "error", "message": "Invalid slug"}), 400
+                slug = resolved
+        if article_path is None or not article_path.exists():
+            return jsonify({"status": "error", "message": f"Article not found: {slug}"}), 404
+        post = frontmatter.load(str(article_path))
+        return jsonify({
+            "status": "ok",
+            "slug": slug,
+            "title": post.metadata.get("title", slug),
+            "sections": parse_sections(post.content),
+        })
+
     @app.route("/api/articles/<path:slug>")
     def api_article(slug):
         from .resolve import load_aliases, resolve_link
         cfg = load_config(base)
         concepts_dir = Path(cfg["paths"]["concepts"])
         meta_dir = Path(cfg["paths"]["meta"])
-        article_path = (concepts_dir / f"{slug}.md").resolve()
-        # Path traversal guard
-        if not str(article_path).startswith(str(concepts_dir.resolve())):
+        article_path = _safe_concept(concepts_dir, slug)
+        if article_path is None:
             return jsonify({"status": "error", "message": "Invalid slug"}), 400
-        # If not found by slug, try alias resolution
         if not article_path.exists():
             aliases = load_aliases(meta_dir)
             resolved = resolve_link(slug, aliases)
             if resolved:
-                article_path = (concepts_dir / f"{resolved}.md").resolve()
-                if not str(article_path).startswith(str(concepts_dir.resolve())):
+                article_path = _safe_concept(concepts_dir, resolved)
+                if article_path is None:
                     return jsonify({"status": "error", "message": "Invalid slug"}), 400
                 slug = resolved
-        if not article_path.exists():
+        if article_path is None or not article_path.exists():
             return jsonify({"status": "error", "message": f"Article not found: {slug}"}), 404
         post = frontmatter.load(str(article_path))
         # Sanitize source URLs (only allow http/https)

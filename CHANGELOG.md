@@ -2,6 +2,22 @@
 
 All notable changes to LLMBase (llmwiki) will be documented in this file.
 
+## [0.7.1] — 2026-04-18
+
+### Added
+- **Section-slicing API for long articles.** New `tools/sections.py` parses an article's body into a nested section tree (level + title + anchor + char offsets + children); fenced code blocks are skipped so `## ` lines inside ` ``` ` blocks aren't mis-treated as headings. Driven by 斯文·太虛間 needs (太虛大師全書: 法華 138k 字, 宗體論 112k 字 — single-article TOCs and chapter-level navigation were forcing the frontend to re-parse `####` heads itself).
+- **`GET /api/articles/<slug>/sections`** — returns `{slug, title, sections}` where each section is `{level, title, anchor, start, end, children}`. Same alias-aware slug resolution and path-traversal guard as `/api/articles/<slug>`.
+- **`kb_get_sections` operation** — table-of-contents discovery via the unified ops registry (CLI + HTTP + MCP).
+- **`kb_get section=<anchor>` parameter** — extracts just that section's subtree (heading + content + descendants) using `body[start:end]`. Lets MCP clients fetch a single chapter from a 100k+ article without paying the full-body context cost. When `section` is omitted, behaviour is unchanged.
+
+### Notes
+- **Anchor format:** `h{level}-{slug-short}-{hash6}` (e.g. `h4-第三章判教-a3f95c`). `slug-short` is the title with invisibles / brackets / punctuation / dashes / whitespace stripped, truncated to 20 code points (CJK + ASCII / kana preserved). `hash6` is the first 6 hex digits of `sha1(joined-normalized-ancestor-chain)` — the *full* ancestor chain, joined by U+203A "›". (The original spec called for 4 hex; bumped to 6 after Codex pointed out 4-hex collisions hit ~50% per book at the section counts 太虛 reaches via the birthday bound — 6 hex drops it to ~0.3%.) Anchors are stable across (a) trivial whitespace / punctuation / zero-width / BiDi-control edits in any title and (b) sibling reordering. They break on (c) title 字 changes anywhere in the chain and (d) reparenting — both of which v0.7.2 will paper over with a content-hash-driven aliases map. Collisions append `-2`, `-3`.
+- **CommonMark conformance:** ATX heading parsing follows §4.2 (max 3-space indent, trailing `#+` only stripped when whitespace-preceded — so `## C#` keeps the `#`); fenced code blocks follow §4.5 (closer must use the same fence char and be ≥ opener in length, no info string), so `` ```mermaid `` blocks containing `## ` lines never get parsed as headings even when nested inside longer fence runs.
+- **v0.7.2 will add** persisted `wiki/_meta/sections/<slug>.json` tracking each section's content-hash; on re-compile, sections matched by content-hash but with shifted anchors emit an `aliases` field in the API response so old shared URLs keep resolving.
+
+### Fixed (in this release, found by Codex pre-commit review)
+- **Path-traversal guard tightened on `/api/articles/<slug>` and `/api/articles/<slug>/sections`.** Prior `str.startswith(str(concepts_dir.resolve()))` check was bypassable when `concepts_dir` shared a string prefix with a sibling directory (e.g. `concepts` vs `concepts_evil`). Switched to `Path.is_relative_to`, which compares path components rather than raw strings. The `kb_get` and `kb_get_sections` ops gained the same guard at the operations layer (previously had no guard at all — only the HTTP layer enforced it, so direct CLI/MCP callers were unprotected).
+
 ## [0.6.9] — 2026-04-18
 
 ### Added
