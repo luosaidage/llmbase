@@ -2,6 +2,14 @@
 
 All notable changes to LLMBase (llmwiki) will be documented in this file.
 
+## [0.7.3] — 2026-04-19
+
+### Added
+- **`tools/normalize.py`** — two CommonMark-safe pre-process passes for classical-text corpora, upstreamed from siwen's 太虛大師全書 post-process scripts (議 A from 2026-04-19 third-batch proposal). Both passes skip fenced code blocks, indented code blocks, ATX headings (including empty `#`/`##`), list items (including multi-paragraph), blockquotes, table rows, thematic breaks, link reference definitions, and type 1-6 HTML block starters — only body paragraphs are touched. CRLF and mixed line endings preserved verbatim at EOF.
+  - **`normalize_paragraphs(body)`** — merges a line into its predecessor when the predecessor doesn't end (after stripping trailing `CLOSING_WRAPPERS`) in a `SENTENCE_TERMINATORS` character. 古籍 OCR / web-scrape often splits sentences on visual column breaks; this reverses that without flattening real paragraph boundaries. Both character sets are module-level constants (customization contract) so downstream corpora can extend them.
+  - **`normalize_heads(body, rules)`** — rewrites ATX heading levels when the title matches a regex in `rules` (first match wins). `HeadRule` is a `TypedDict{pattern, level}`; `rules == []` is a no-op (the upstream default). Downstream ships its own rule packs — e.g. siwen's 太虛 pack maps `^第[一二三…]+[章編篇卷]` → level 2, `^[甲乙丙…]、` → level 3.
+  - **Empirical baseline** (siwen 太虛 62 books): ~1,500 head re-levels, ~14,000 paragraph merges. Library-only — no pipeline integration; callers invoke before `compile`. Fence + heading regexes reused from `tools/sections.py` (no duplication).
+
 ## [0.7.2] — 2026-04-18
 
 ### Added

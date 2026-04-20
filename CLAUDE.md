@@ -44,6 +44,8 @@ customize behavior without forking functions. This is a **stable contract**.
 | tools/entities.py    | ENTITY_PROMPT             | User prompt template for entities        |
 | tools/entities.py    | ENTITY_ARTICLE_FORMATTER  | Callable to format article list for LLM  |
 | tools/export.py      | (uses SECTION_HEADERS)    | Language sections from compile module    |
+| tools/normalize.py   | SENTENCE_TERMINATORS      | Line terminators for paragraph-merge (default CJK + ASCII) |
+| tools/normalize.py   | CLOSING_WRAPPERS          | Brackets/quotes that may follow a terminator before merge-check |
 | tools/web.py         | derive_session_token()    | Public function: secret → cookie token   |
 | tools/web.py         | require_auth              | Module-level decorator for EXTRA_ROUTES  |
 | tools/web.py         | app.config["llmbase"]     | Runtime dict: base_dir, cfg, api_secret, session_token |
