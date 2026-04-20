@@ -48,6 +48,10 @@ customize behavior without forking functions. This is a **stable contract**.
 | tools/normalize.py   | CLOSING_WRAPPERS          | Brackets/quotes that may follow a terminator before merge-check |
 | tools/chunk_cache.py | ChunkCache(base, subdir=) | Content-hash-validated (cid, content_hash)→output cache for pipelines |
 | tools/split.py       | split_by_heading(body, level) | Flat section parse — `list[Section]` at target ATX depth; no heuristics |
+| tools/pipeline/      | run_stage(base, stage, key, *, ttl, meta_init) | Contextmanager — guarantees `ok`/`failed`/`partial` terminal event on every exit; SIGKILL recovery via stale-lock `interrupted` |
+| tools/pipeline/      | rebuild_state(base, stage, key) → StageState | Derive status/attempts/started/finished/last_err/artifacts/meta from log (append-only JSONL is source of truth) |
+| tools/pipeline/      | StagePartialExit / ctx.mark_partial(reason) | Handler marks run `partial` (not `ok`/`failed`) — e.g. LLM quota at chunk 50/62; next run resumes from cache |
+| tools/pipeline/      | RESERVED_EVENTS | Event names refused by `ctx.log()` (start/ok/failed/partial/interrupted/artifact/meta_update) — prefix custom events with `chunk_` / `cache_` |
 | tools/web.py         | derive_session_token()    | Public function: secret → cookie token   |
 | tools/web.py         | require_auth              | Module-level decorator for EXTRA_ROUTES  |
 | tools/web.py         | app.config["llmbase"]     | Runtime dict: base_dir, cfg, api_secret, session_token |
