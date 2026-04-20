@@ -41,7 +41,7 @@ def test_chat_with_context_sanitizes_payload():
     """End-to-end: surrogate-laden context must not break the LLM call."""
     captured = {}
 
-    def fake_chat(prompt, system="", model=None, max_tokens=16384):
+    def fake_chat(prompt, system="", model=None, max_tokens=16384, **kwargs):
         captured["prompt"] = prompt
         captured["model"] = model
         # If sanitize failed, this encode raises and the test fails clearly.
@@ -65,7 +65,7 @@ def test_query_passes_model_through(tmp_kb):
     """query() must pass `model` into chat_with_context."""
     captured = {}
 
-    def fake_cwc(question, context_files, system="", model=None, max_tokens=16384):
+    def fake_cwc(question, context_files, system="", model=None, max_tokens=16384, **kwargs):
         captured["model"] = model
         return "stub answer"
 
@@ -91,11 +91,11 @@ def test_query_with_search_passes_model_through(tmp_kb):
     selector_calls = []
     answer_calls = []
 
-    def fake_chat(prompt, system="", model=None, max_tokens=16384):
+    def fake_chat(prompt, system="", model=None, max_tokens=16384, **kwargs):
         selector_calls.append(model)
         return "Emptiness / 空"
 
-    def fake_cwc(question, context_files, system="", model=None, max_tokens=16384):
+    def fake_cwc(question, context_files, system="", model=None, max_tokens=16384, **kwargs):
         answer_calls.append(model)
         return "stub answer"
 
@@ -114,7 +114,7 @@ def test_query_default_model_is_none_when_omitted(tmp_kb):
     """Omitting `model` must result in None (defers to LLMBASE_MODEL downstream)."""
     captured = {}
 
-    def fake_cwc(question, context_files, system="", model=None, max_tokens=16384):
+    def fake_cwc(question, context_files, system="", model=None, max_tokens=16384, **kwargs):
         captured["model"] = model
         return "x"
 
@@ -139,7 +139,7 @@ def _client(tmp_kb):
 def test_api_ask_shallow_passes_model(tmp_kb):
     captured = {}
 
-    def fake_query(q, file_back=False, base_dir=None, tone="default", return_path=False, model=None):
+    def fake_query(q, file_back=False, base_dir=None, tone="default", return_path=False, model=None, **kwargs):
         captured["model"] = model
         return {"answer": "x", "output_path": None}
 
@@ -197,7 +197,7 @@ def test_api_ask_empty_string_model_treated_as_none(tmp_kb):
     """Empty / whitespace `model` must be treated as 'use default', not error."""
     captured = {}
 
-    def fake_query(q, file_back=False, base_dir=None, tone="default", return_path=False, model=None):
+    def fake_query(q, file_back=False, base_dir=None, tone="default", return_path=False, model=None, **kwargs):
         captured["model"] = model
         return {"answer": "x", "output_path": None}
 
@@ -292,7 +292,7 @@ def test_api_ask_model_override_allowed_when_authed(tmp_kb, monkeypatch):
     captured = {}
 
     def fake_query(q, file_back=False, base_dir=None, tone="default",
-                   return_path=False, model=None):
+                   return_path=False, model=None, **kwargs):
         captured["model"] = model
         return {"answer": "x", "output_path": None}
 
@@ -354,7 +354,7 @@ def test_api_ask_model_allowlist_accepts_listed(tmp_kb, monkeypatch):
     captured = {}
 
     def fake_query(q, file_back=False, base_dir=None, tone="default",
-                   return_path=False, model=None):
+                   return_path=False, model=None, **kwargs):
         captured["model"] = model
         return {"answer": "x", "output_path": None}
 

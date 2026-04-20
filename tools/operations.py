@@ -117,6 +117,7 @@ def _op_ask(
     deep: bool = True,
     promote: bool = False,
     model: str | None = None,
+    api_key: str | None = None,
 ) -> dict:
     from .query import query, query_with_search
     if deep:
@@ -128,6 +129,7 @@ def _op_ask(
             return_context=True,
             promote=promote,
             model=model,
+            api_key=api_key,
         )
         if isinstance(result, dict):
             return result
@@ -138,6 +140,7 @@ def _op_ask(
         base_dir=base_dir,
         tone=tone,
         model=model,
+        api_key=api_key,
     )
     return {"answer": answer}
 
@@ -414,6 +417,18 @@ _CANONICAL: list[Operation] = [
                 "deep": {"type": "boolean", "default": True},
                 "promote": {"type": "boolean", "default": False},
                 "model": {"type": "string"},
+                # Per-request LLM credential override. writeOnly = the
+                # schema never echoes the key in op listings, tool
+                # introspection, or MCP metadata. HTTP surface rejects
+                # this via the body (X-LLM-Key header only) — the field
+                # is accepted here so CLI / MCP / in-process dispatch
+                # callers can supply it, but write-only schema prevents
+                # it from ever being surfaced in a response schema.
+                "api_key": {
+                    "type": "string",
+                    "writeOnly": True,
+                    "description": "Per-request LLM API key override. HTTP callers MUST use the X-LLM-Key header instead; the /api/ask body is rejected with 400 if any api_key-like field is present.",
+                },
             },
             "required": ["question"],
         },

@@ -163,6 +163,31 @@ BEFORE_REQUEST_HOOKS: list = []
 AFTER_REQUEST_HOOKS: list = []
 
 
+def _parse_bearer(raw: str) -> str:
+    """Extract the token from ``Authorization: Bearer <token>``.
+
+    Returns ``""`` when the header is missing or does not start with the
+    literal ``Bearer `` scheme. Tightened in v0.7.4: the legacy
+    ``.replace("Bearer ", "")`` pattern silently accepted
+    ``Authorization: <secret>`` without the ``Bearer `` prefix and any
+    stray ``Bearer `` substring anywhere in the value, which Codex
+    flagged as a HIGH auth-bypass vector on the X-LLM-Key gate.
+
+    Security-sensitive (``hmac.compare_digest`` below uses the return
+    value as the comparison input). Keep strict:
+    - Case-sensitive ``Bearer `` (per RFC 6750 §2.1 — ``Bearer`` is the
+      registered scheme, comparisons are case-insensitive at the
+      parser level but we keep the strict form since all our clients
+      emit the canonical casing; this avoids one more footgun).
+    - Exactly one space separator; trailing whitespace on the token
+      is stripped so browsers / proxies that fold whitespace can't
+      silently split callers into two buckets.
+    """
+    if not raw.startswith("Bearer "):
+        return ""
+    return raw[len("Bearer "):].strip()
+
+
 def require_auth(f):
     """Decorator: protect a route when LLMBASE_API_SECRET is set.
 
@@ -187,10 +212,10 @@ def require_auth(f):
         session_token = llm_cfg.get("session_token", "")
         if not api_secret:
             return f(*args, **kwargs)
-        auth = request.headers.get("Authorization", "").replace("Bearer ", "")
+        auth = _parse_bearer(request.headers.get("Authorization", ""))
         cookie = request.cookies.get("llmbase_auth", "")
-        if (hmac.compare_digest(auth, api_secret)
-                or hmac.compare_digest(cookie, session_token)):
+        if (auth and hmac.compare_digest(auth, api_secret)) or \
+                hmac.compare_digest(cookie, session_token):
             return f(*args, **kwargs)
         return jsonify({"status": "error", "message": "Unauthorized"}), 401
     return decorated
@@ -801,9 +826,64 @@ def create_web_app(base_dir: Path | None = None):
         results = search(q, top_k=top_k, base_dir=base)
         return jsonify({"query": q, "results": results})
 
+    # Body-field name fragments that signal an LLM API key. Request
+    # bodies get logged in proxies / WAFs / access logs far more often
+    # than headers do; accepting ``api_key`` (or any spelling variant)
+    # in the body would make the key visible across that whole chain.
+    # X-LLM-Key header is the only supported channel — see v0.7.4.
+    # Matching is case-insensitive and ignores ``-``/``_`` separators,
+    # so ``api_key`` / ``apiKey`` / ``API-KEY`` / ``x-llm-key`` are all
+    # caught by the same canonical-name check below.
+    _API_KEY_BODY_FRAGMENTS = (
+        "apikey",        # api_key, apiKey, api-key, API_KEY, …
+        "xllmkey",       # x-llm-key, x_llm_key, X-LLM-Key
+        "openaiapikey",  # openai_api_key, OpenAI-API-Key
+        "llmkey",        # llm_key, llmKey
+    )
+
+    def _looks_like_api_key_field(name: str) -> bool:
+        canon = "".join(c for c in name.lower() if c.isalnum())
+        return canon in _API_KEY_BODY_FRAGMENTS
+
+    def _find_api_key_field(obj) -> str | None:
+        """Iteratively scan *obj* for any dict key (at any depth) that
+        names an LLM API key (case-insensitive, separator-normalised).
+        Returns the offending key (for the 400 body) or ``None``.
+
+        Iterative (not recursive) so there is no depth cap — Codex
+        review v0.7.4 flagged any hard depth limit as a nested-body
+        bypass vector. Payload size is already bounded by Flask's
+        request-size limit, so an unbounded scan is safe."""
+        stack = [obj]
+        while stack:
+            cur = stack.pop()
+            if isinstance(cur, dict):
+                for k, v in cur.items():
+                    if isinstance(k, str) and _looks_like_api_key_field(k):
+                        return k
+                    stack.append(v)
+            elif isinstance(cur, list):
+                stack.extend(cur)
+        return None
+
     @app.route("/api/ask", methods=["POST"])
     def api_ask():
         data = request.json or {}
+        # Refuse any attempt to carry the LLM key in the body before
+        # any other parsing — this is the narrowest, loudest rejection
+        # point and keeps the key off proxy/access-log surfaces. We
+        # recursively scan nested objects/lists so
+        # ``{"meta": {"api_key": "..."}}`` is also caught; v0.7.4
+        # Codex review flagged top-level-only as a bypass.
+        bad_field = _find_api_key_field(data)
+        if bad_field is not None:
+            return jsonify({
+                "status": "error",
+                "message": (
+                    f"'{bad_field}' is not accepted in the request body; "
+                    "use the X-LLM-Key header instead"
+                ),
+            }), 400
         q = data.get("question", "")
         deep = data.get("deep", False)
         file_back = data.get("file_back", True)
@@ -820,6 +900,18 @@ def create_web_app(base_dir: Path | None = None):
             if len(raw_model) > 200:
                 return jsonify({"status": "error", "message": "model too long"}), 400
             model = raw_model or None
+        # Per-request LLM API key override via X-LLM-Key header (v0.7.4).
+        # Header-only by design (see _API_KEY_BODY_FIELDS rationale).
+        # Empty string ≡ absent. We cap length to bound memory and reject
+        # obvious garbage but do NOT validate format — aggregator /
+        # local-Ollama keys come in many shapes.
+        raw_api_key = request.headers.get("X-LLM-Key", "")
+        api_key: str | None = None
+        if raw_api_key:
+            raw_api_key = raw_api_key.strip()
+            if len(raw_api_key) > 500:
+                return jsonify({"status": "error", "message": "X-LLM-Key too long"}), 400
+            api_key = raw_api_key or None
         # Model override is a cost-impacting lever on public deployments —
         # untrusted callers could pin the most expensive model available to
         # the backing API key. When API_SECRET is set (prod signal), require
@@ -835,18 +927,23 @@ def create_web_app(base_dir: Path | None = None):
                         "status": "error",
                         "message": f"model '{model}' not in LLMBASE_MODEL_ALLOWLIST",
                     }), 400
-        auth_header = request.headers.get("Authorization", "").replace("Bearer ", "")
+        auth_header = _parse_bearer(request.headers.get("Authorization", ""))
         auth_cookie = request.cookies.get("llmbase_auth", "")
         # Two auth levels: the SPA-convenience cookie (minted for anyone who
         # loads `/`) is accepted for promote — the existing UI relies on it.
         # Model override, which is a cost lever on public deployments, demands
         # the raw API secret via the Authorization header so a drive-by
         # browser visitor cannot pin an expensive model. See CHANGELOG.
+        # ``auth_header`` is "" when the Authorization header was missing
+        # or used a non-Bearer scheme — guard the compare so we never
+        # compute ``compare_digest("", API_SECRET)`` as an auth decision
+        # (``hmac.compare_digest`` returns False there, but being
+        # explicit makes the intent scan-greppable).
         authed_cookie = bool(API_SECRET) and (
-            hmac.compare_digest(auth_header, API_SECRET)
+            (bool(auth_header) and hmac.compare_digest(auth_header, API_SECRET))
             or hmac.compare_digest(auth_cookie, SESSION_TOKEN)
         )
-        authed_strong = bool(API_SECRET) and hmac.compare_digest(auth_header, API_SECRET)
+        authed_strong = bool(API_SECRET) and bool(auth_header) and hmac.compare_digest(auth_header, API_SECRET)
         if promote and API_SECRET and not authed_cookie:
             return jsonify({
                 "status": "error",
@@ -856,6 +953,17 @@ def create_web_app(base_dir: Path | None = None):
             return jsonify({
                 "status": "error",
                 "message": "model override requires Authorization: Bearer <API_SECRET>",
+            }), 401
+        # X-LLM-Key is a cost + identity lever (caller-funded LLM bills,
+        # potential per-tenant personas). On public deployments
+        # (LLMBASE_API_SECRET set) require the raw API secret via
+        # Authorization — same gate as model override. In local dev
+        # (no API_SECRET) the header is honoured without auth, matching
+        # /api/ingest's policy.
+        if api_key is not None and API_SECRET and not authed_strong:
+            return jsonify({
+                "status": "error",
+                "message": "X-LLM-Key requires Authorization: Bearer <API_SECRET>",
             }), 401
         if deep:
             # Route through operations.dispatch so promote=True acquires the
@@ -870,6 +978,8 @@ def create_web_app(base_dir: Path | None = None):
             }
             if model is not None:
                 ask_args["model"] = model
+            if api_key is not None:
+                ask_args["api_key"] = api_key
             try:
                 result = _ops.dispatch("kb_ask", base, ask_args)
             except RuntimeError as e:
@@ -891,6 +1001,7 @@ def create_web_app(base_dir: Path | None = None):
                 tone=tone,
                 return_path=True,
                 model=model,
+                api_key=api_key,
             )
             payload = {"answer": result["answer"]}
             if result.get("output_path"):

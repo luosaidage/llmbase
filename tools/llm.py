@@ -153,17 +153,39 @@ def _get_float_env(name: str, default: float) -> float:
         return default
 
 
-def get_client() -> OpenAI:
+def get_client(api_key: str | None = None) -> OpenAI:
+    """Return an OpenAI client.
+
+    When *api_key* is ``None`` (the common path), returns the
+    module-level singleton built from env (``LLMBASE_API_KEY`` /
+    ``OPENAI_API_KEY``). Cached across calls.
+
+    When *api_key* is a string, returns a **fresh, un-cached** client
+    built with that key. This is the per-request override path used by
+    ``/api/ask`` (``X-LLM-Key`` header). Never cached — mixing a
+    caller-supplied key into the singleton would leak it across
+    subsequent requests with different identity.
+    """
+    # HTTP timeouts — overridable via env for local Ollama / slow GPUs
+    # where the 300 s default isn't enough (issue #6). CONNECT covers
+    # the initial TCP/TLS handshake; READ covers per-call wall time.
+    read_timeout = _get_float_env("LLMBASE_HTTP_TIMEOUT", 300.0)
+    connect_timeout = _get_float_env("LLMBASE_HTTP_CONNECT_TIMEOUT", 30.0)
+    base_url = os.getenv("LLMBASE_BASE_URL") or os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+
+    if api_key is not None:
+        return OpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            timeout=httpx.Timeout(read_timeout, connect=connect_timeout),
+            max_retries=2,
+        )
+
     global _client
     if _client is None:
-        # HTTP timeouts — overridable via env for local Ollama / slow GPUs
-        # where the 300 s default isn't enough (issue #6). CONNECT covers
-        # the initial TCP/TLS handshake; READ covers per-call wall time.
-        read_timeout = _get_float_env("LLMBASE_HTTP_TIMEOUT", 300.0)
-        connect_timeout = _get_float_env("LLMBASE_HTTP_CONNECT_TIMEOUT", 30.0)
         _client = OpenAI(
             api_key=os.getenv("LLMBASE_API_KEY") or os.getenv("OPENAI_API_KEY"),
-            base_url=os.getenv("LLMBASE_BASE_URL") or os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+            base_url=base_url,
             timeout=httpx.Timeout(read_timeout, connect=connect_timeout),
             max_retries=2,
         )
@@ -208,13 +230,29 @@ def _get_retries(primary: bool) -> int:
         return default
 
 
-def _call_llm(messages: list, model: str, max_tokens: int) -> str:
+def _redact_key(text: str, api_key: str | None) -> str:
+    """Strip any literal occurrence of *api_key* from *text* (for log lines).
+
+    Defence-in-depth: OpenAI/httpx error messages can echo the key back
+    (``"Incorrect API key provided: sk-****"`` or similar). Since we
+    never write raw error strings without going through a logger, this
+    replacement catches per-request keys before they land in stdout /
+    syslog / structured log collectors. Module singleton's env key is
+    the operator's own credential — not redacted here."""
+    if not api_key or not isinstance(text, str):
+        return text
+    return text.replace(api_key, "[redacted]")
+
+
+def _call_llm(messages: list, model: str, max_tokens: int, api_key: str | None = None) -> str:
     """Single LLM call with response extraction.
 
     Handles models with thinking mode: if content is empty but
     reasoning_content exists, uses that as content.
-    """
-    client = get_client()
+
+    *api_key*: when provided, uses a fresh un-cached client for this
+    call (see ``get_client``)."""
+    client = get_client(api_key=api_key)
     response = client.chat.completions.create(
         model=model,
         messages=messages,
@@ -288,8 +326,12 @@ def chat(
     system: str = "",
     model: str | None = None,
     max_tokens: int = 16384,
+    api_key: str | None = None,
 ) -> str:
-    """Send a prompt with automatic model fallback on failure."""
+    """Send a prompt with automatic model fallback on failure.
+
+    *api_key*: per-call override (v0.7.4). None → module singleton.
+    """
     if model is None:
         model = get_default_model()
 
@@ -305,7 +347,7 @@ def chat(
         retries = _get_retries(primary=(i == 0))
         for attempt in range(retries):
             try:
-                result = _call_llm(messages, current_model, max_tokens)
+                result = _call_llm(messages, current_model, max_tokens, api_key=api_key)
                 if result:
                     if i > 0:
                         logger.warning(f"Primary model failed, used fallback: {current_model}")
@@ -315,7 +357,7 @@ def chat(
                     time.sleep(1)
                     continue
             except Exception as e:
-                err_msg = str(e)
+                err_msg = _redact_key(str(e), api_key)
                 if attempt < retries - 1:
                     wait = 2 ** attempt
                     logger.debug(f"{current_model} attempt {attempt+1} failed: {err_msg}, retrying in {wait}s")
@@ -324,6 +366,10 @@ def chat(
                 if i < len(models_to_try) - 1:
                     logger.warning(f"{current_model} failed ({err_msg}), falling back to {models_to_try[i+1]}")
                     break  # Try next model
+                # Last model — re-raise via a redacted wrapper so the key
+                # doesn't land in the caller's traceback / HTTP 500 body.
+                if api_key:
+                    raise RuntimeError(err_msg) from None
                 raise  # Last model, re-raise
 
     return ""
@@ -355,8 +401,12 @@ def chat_with_context(
     system: str = "",
     model: str | None = None,
     max_tokens: int = 16384,
+    api_key: str | None = None,
 ) -> str:
-    """Ask a question with file contents as context."""
+    """Ask a question with file contents as context.
+
+    *api_key*: per-call override (v0.7.4). None → module singleton.
+    """
     context_parts = []
     for f in context_files:
         path = strip_surrogates(str(f.get("path", "")))
@@ -375,4 +425,4 @@ Based on the above context, please answer the following question:
 
 {safe_question}"""
 
-    return chat(prompt, system=system, model=model, max_tokens=max_tokens)
+    return chat(prompt, system=system, model=model, max_tokens=max_tokens, api_key=api_key)

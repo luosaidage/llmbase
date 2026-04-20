@@ -22,7 +22,7 @@ def test_promote_declined(tmp_kb, monkeypatch):
     """Judge says no — nothing should be written."""
     monkeypatch.chdir(tmp_kb)
 
-    def fake_chat(prompt, system="", model=None, max_tokens=8192):
+    def fake_chat(prompt, system="", model=None, max_tokens=8192, **kwargs):
         return _judge_response({"promote": False, "reason": "too vague"})
 
     monkeypatch.setattr("tools.query.chat", fake_chat)
@@ -64,7 +64,7 @@ def test_promote_new_concept(tmp_kb, monkeypatch):
         ),
     }
 
-    def fake_chat(prompt, system="", model=None, max_tokens=8192):
+    def fake_chat(prompt, system="", model=None, max_tokens=8192, **kwargs):
         return _judge_response(judge_decision)
 
     monkeypatch.setattr("tools.query.chat", fake_chat)
@@ -120,7 +120,7 @@ def test_promote_merges_into_existing(tmp_kb, monkeypatch):
         ),
     }
 
-    def fake_chat(prompt, system="", model=None, max_tokens=8192):
+    def fake_chat(prompt, system="", model=None, max_tokens=8192, **kwargs):
         return _judge_response(judge_decision)
 
     monkeypatch.setattr("tools.query.chat", fake_chat)
@@ -154,7 +154,7 @@ def test_promote_invalid_json(tmp_kb, monkeypatch):
     """Judge returns garbage — should fail safely without writing."""
     monkeypatch.chdir(tmp_kb)
 
-    def fake_chat(prompt, system="", model=None, max_tokens=8192):
+    def fake_chat(prompt, system="", model=None, max_tokens=8192, **kwargs):
         return "I'm sorry, I cannot decide this question."
 
     monkeypatch.setattr("tools.query.chat", fake_chat)
@@ -182,7 +182,7 @@ def test_promote_non_object_json(tmp_kb, monkeypatch):
     monkeypatch.chdir(tmp_kb)
 
     for payload in ('[]', '"ok"', 'null', '42'):
-        def fake_chat(prompt, system="", model=None, max_tokens=8192, _p=payload):
+        def fake_chat(prompt, system="", model=None, max_tokens=8192, _p=payload, **kwargs):
             return _p
 
         monkeypatch.setattr("tools.query.chat", fake_chat)
@@ -219,7 +219,7 @@ def test_promote_merge_into_overrides_slug(tmp_kb, monkeypatch):
         ),
     }
 
-    def fake_chat(prompt, system="", model=None, max_tokens=8192):
+    def fake_chat(prompt, system="", model=None, max_tokens=8192, **kwargs):
         return _judge_response(judge_decision)
 
     monkeypatch.setattr("tools.query.chat", fake_chat)
@@ -251,7 +251,7 @@ def test_promote_traversal_slug_rejected(tmp_kb, monkeypatch):
     to empty, the promotion is rejected without touching disk."""
     monkeypatch.chdir(tmp_kb)
 
-    def fake_chat(prompt, system="", model=None, max_tokens=8192):
+    def fake_chat(prompt, system="", model=None, max_tokens=8192, **kwargs):
         return _judge_response({
             "promote": True,
             "reason": "evil",
@@ -315,7 +315,7 @@ def test_promote_missing_required_fields(tmp_kb, monkeypatch):
     """Judge says promote=true but omits content — should reject."""
     monkeypatch.chdir(tmp_kb)
 
-    def fake_chat(prompt, system="", model=None, max_tokens=8192):
+    def fake_chat(prompt, system="", model=None, max_tokens=8192, **kwargs):
         return _judge_response({
             "promote": True,
             "reason": "looks good",

@@ -2,6 +2,24 @@
 
 All notable changes to LLMBase (llmwiki) will be documented in this file.
 
+## [0.7.4] — 2026-04-20
+
+### Added
+- **Per-request LLM API key override via `X-LLM-Key` header** on `/api/ask` (议 B from siwen's 2026-04-16 request; the feature originally slated for v0.7.0 — that version-line hole stays reserved historical). Callers who need multi-tenant / persona-switching (e.g. siwen's key1/key2 dual-identity 杳眇 文官 pipeline) can now pin a per-request credential without bypassing `/api/ask` and losing RAG, `file_back`, and job_lock.
+  - **`tools/llm.py:get_client(api_key=None)`** — `None` returns the module-level singleton (cached), a string value returns a **fresh un-cached** client. Un-cached by design: mixing a caller-supplied key into the singleton would leak across subsequent requests.
+  - **`chat()` / `chat_with_context()` / `query()` / `query_with_search()` / `_op_ask()`** gain `api_key: str | None = None` (forwarded through the full plumbing; omitted callers are unaffected).
+  - **`kb_ask` op schema** declares `api_key` with `"writeOnly": true` so it never echoes in CLI op listings / MCP tool descriptions.
+- **Non-negotiable security posture** (gate for the release):
+  - HTTP **header-only**: `X-LLM-Key`. The request body is rejected with `400` if any key-bearing field is present — matched case-insensitively and with separator-normalization, so `api_key` / `apiKey` / `API-KEY` / `x-llm-key` / `openai_api_key` / `llm_key` all hit the same gate. Rationale: request bodies appear in proxy / WAF / access logs far more often than headers.
+  - **Auth-gated on public deployments**: when `LLMBASE_API_SECRET` is set, `X-LLM-Key` requires `Authorization: Bearer <secret>` (same strong-auth gate as `model` override — cookie auth is **insufficient**, preventing drive-by browser visitors from burning the operator's key). When `LLMBASE_API_SECRET` is unset (local dev), the header is honoured without auth, matching `/api/ingest`.
+  - **Key never logged**: `_redact_key` scrubs any literal occurrence of the per-request key from error strings before they reach `logger.debug` / `logger.warning`, and the final-retry exception is wrapped in a redacted `RuntimeError` so the key can't land in a caller traceback or HTTP 500 body.
+  - **Key never in `outputs/`**: `_file_output` only takes `question / answer / format / cfg` — the key never reaches that call path.
+  - **Response body never echoes the key** (regression test asserts this verbatim).
+  - Promote-judge still uses the module singleton — meta-eval must be insulated from per-query keys (same rationale as the existing `model` carve-out).
+
+### Changed (security hardening)
+- **`Authorization` header now requires the literal `Bearer ` scheme.** The prior `.replace("Bearer ", "")` pattern silently accepted `Authorization: <secret>` with no scheme (a HIGH auth-bypass caught during X-LLM-Key review). This affects every endpoint protected by `require_auth` as well as the `/api/ask` strong-auth gate used by `model` override. **Breaking change for callers that sent the raw secret without `Bearer `** — the canonical form `Authorization: Bearer <secret>` has always been the documented contract, so legitimate clients are unaffected. If you see new 401s after upgrading, check your client emits `Authorization: Bearer`.
+
 ## [0.7.3] — 2026-04-19
 
 ### Added

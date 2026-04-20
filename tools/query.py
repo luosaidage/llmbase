@@ -82,6 +82,7 @@ def query(
     tone: str = "default",
     return_path: bool = False,
     model: str | None = None,
+    api_key: str | None = None,
 ) -> str | dict:
     """Ask a question against the wiki and return the answer.
 
@@ -91,6 +92,12 @@ def query(
 
     *model* overrides the default LLM for this call only (no env mutation,
     no client re-init). ``None`` falls back to ``LLMBASE_MODEL``.
+
+    *api_key* overrides the LLM credential for this call only (v0.7.4).
+    Fresh un-cached client per call. ``None`` falls back to
+    ``LLMBASE_API_KEY``/``OPENAI_API_KEY``. The key never reaches
+    ``_file_output`` (it takes only question/answer/format/cfg) and is
+    redacted from any error logging in ``chat()``.
     """
     cfg = load_config(base_dir)
     ensure_dirs(cfg)
@@ -116,6 +123,7 @@ def query(
         system=system,
         model=model,
         max_tokens=cfg["llm"]["max_tokens"],
+        api_key=api_key,
     )
 
     # File back into wiki if requested
@@ -134,6 +142,7 @@ def query_with_search(
     return_context: bool = False,
     promote: bool = False,
     model: str | None = None,
+    api_key: str | None = None,
 ) -> str | dict:
     """Multi-step query: first search for relevant articles, then answer.
 
@@ -149,6 +158,11 @@ def query_with_search(
     and the answer call. Promote-judge intentionally still uses the
     default model, since its job is meta-evaluation and should be
     insulated from per-query model whims.
+
+    *api_key* overrides the LLM credential for the selector and answer
+    calls (v0.7.4). Promote-judge uses the module singleton — same
+    rationale as *model*: meta-eval should not be paid for by an
+    untrusted per-request key.
     """
     cfg = load_config(base_dir)
     ensure_dirs(cfg)
@@ -200,7 +214,7 @@ And this question: {strip_surrogates(question)}
 
 Which articles (by title) are most relevant? List up to 10, one per line, just the titles."""
 
-    relevant_titles = chat(search_prompt, model=model, max_tokens=1024)
+    relevant_titles = chat(search_prompt, model=model, max_tokens=1024, api_key=api_key)
 
     # Step 2: Load those articles
     concepts_dir = Path(cfg["paths"]["concepts"])
@@ -231,6 +245,7 @@ Which articles (by title) are most relevant? List up to 10, one per line, just t
         system=system,
         model=model,
         max_tokens=cfg["llm"]["max_tokens"],
+        api_key=api_key,
     )
 
     output_path = _file_output(question, answer, "markdown", cfg) if file_back else None
