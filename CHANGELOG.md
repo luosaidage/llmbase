@@ -2,6 +2,18 @@
 
 All notable changes to LLMBase (llmwiki) will be documented in this file.
 
+## [0.7.5] — 2026-04-20
+
+### Added
+- **`tools/chunk_cache.py`: `ChunkCache(base)` — content-hash-validated cache for pipeline chunks (议 C from siwen's 2026-04-20 third-batch proposal, refined to the "primitive, no stage knowledge" form siwen and I converged on).** Fixes a concrete corruption seen in siwen wenguan the same day: chunks cached by positional key (`chunks/{idx:02d}.md`) were served stale when the splitter's boundaries shifted — 3 books (法華、仁王、宗體論) stitched together outputs for chunks that no longer existed. Keying by `(cid, content_hash)` means any content change at a slot produces a miss and forces recompute.
+  - **API** (stable contract, matches siwen's refined spec):
+    - `get(cid, content_hash) -> str | None` — hit requires both to match; content-hash mismatch is a miss (the whole point).
+    - `put(cid, content_hash, output) -> None` — atomic via `atomic_write_text` → tempfile + POSIX rename; concurrent readers never see a torn file.
+    - `clear(cid) -> None` — drop every stored hash for that cid; idempotent on unknown cids.
+  - **No stage / domain knowledge in upstream**: `cid` and `content_hash` are opaque strings supplied by the caller. Downstream picks the strategy — siwen wenguan hashes chunk text for `content_hash` and uses the chunk's H3 title for `cid`; other pipelines could use line-range or slug+idx, whatever fingerprints their slot + content. This parallels `normalize_heads`'s rule-pack contract.
+  - **Filesystem safety**: cids and content hashes are sha256-prefixed before hitting disk, so `../../etc/passwd` or CJK slashes as cids can't escape the cache directory.
+  - Reusable `atomic_write_text` added to `tools/atomic.py` alongside the existing `atomic_write_json`.
+
 ## [0.7.4] — 2026-04-20
 
 ### Added

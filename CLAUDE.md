@@ -46,6 +46,7 @@ customize behavior without forking functions. This is a **stable contract**.
 | tools/export.py      | (uses SECTION_HEADERS)    | Language sections from compile module    |
 | tools/normalize.py   | SENTENCE_TERMINATORS      | Line terminators for paragraph-merge (default CJK + ASCII) |
 | tools/normalize.py   | CLOSING_WRAPPERS          | Brackets/quotes that may follow a terminator before merge-check |
+| tools/chunk_cache.py | ChunkCache(base, subdir=) | Content-hash-validated (cid, content_hash)→output cache for pipelines |
 | tools/web.py         | derive_session_token()    | Public function: secret → cookie token   |
 | tools/web.py         | require_auth              | Module-level decorator for EXTRA_ROUTES  |
 | tools/web.py         | app.config["llmbase"]     | Runtime dict: base_dir, cfg, api_secret, session_token |
