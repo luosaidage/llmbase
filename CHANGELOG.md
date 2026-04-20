@@ -2,6 +2,14 @@
 
 All notable changes to LLMBase (llmwiki) will be documented in this file.
 
+## [0.7.6] — 2026-04-20
+
+### Added
+- **`tools/split.py::split_by_heading(body, level) -> list[Section]` — 议 E.** Flat-section primitive for pipeline consumption: cuts a Markdown body at every ATX heading of the given level, returning a `list[Section]` with `level`, `title`, `header_line`, `start`, `end`, `content` fields. Strict primitive — **parse only**, no heuristics. No `is_single_book_bian`, no `merge_tiny_items`, no `strip_trailing_next_title` in upstream. Downstream (siwen 太虛, CBETA, …) composes `split_<corpus>.py` on top.
+  - Rules (siwen's 议 E spec): only `level`-exact headings are split points; next same-or-higher-level heading ends a section (`#` ends a `##` section, `###` stays inside); fenced code blocks skipped (reuses `sections._iter_headings`); CommonMark §4.2 0-3 space indent tolerated; preface before first matched heading is **not** returned (downstream takes `body[:sections[0].start]`); no matching heading ⇒ `[]`.
+  - Contrast with `tools/sections.py`: that module produces a nested tree with stable anchors for TOC / section-API use. This one is flat, single-level, sized for one-chunk-per-LLM-call pipeline chunking. No regex duplication — fence state machine reused.
+  - 26 tests covering preface slicing, fenced pseudo-headings, 0-3 / 4+ indent boundary, CRLF, level=1/3/6, realistic 太虛 編/章/甲乙 structure.
+
 ## [0.7.5] — 2026-04-20
 
 ### Added
